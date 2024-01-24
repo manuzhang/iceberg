@@ -777,6 +777,7 @@ public class TestHelpers {
   }
 
   public static List<DataFile> dataFiles(Table table, String branch) {
+    table.refresh();
     TableScan scan = table.newScan();
     if (branch != null) {
       scan = scan.useRef(branch);
