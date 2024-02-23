@@ -74,6 +74,9 @@ jobs:
     env:
       SPARK_LOCAL_IP: localhost
     steps:
+      - uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -104,6 +107,9 @@ jobs:
     env:
       SPARK_LOCAL_IP: localhost
     steps:
+      - uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -134,6 +140,9 @@ jobs:
     env:
       SPARK_LOCAL_IP: localhost
     steps:
+      - uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
