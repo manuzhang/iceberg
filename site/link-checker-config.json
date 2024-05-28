@@ -11,6 +11,9 @@
     },
     {
       "pattern": "^https://search.maven.org/"
+    },
+    {
+      "pattern": "^http://mail-archives.apache.org/"
     }
   ],
   "replacementPatterns": [
