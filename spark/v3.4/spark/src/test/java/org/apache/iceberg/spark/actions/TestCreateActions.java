@@ -183,6 +183,8 @@ public class TestCreateActions extends SparkCatalogTestBase {
   public void after() throws IOException {
     // Drop the hive table.
     spark.sql(String.format("DROP TABLE IF EXISTS %s", baseTableName));
+    catalogConfig.forEach(
+        (key, value) -> spark.conf().unset("spark.sql.catalog." + catalogName + "." + key));
   }
 
   @Test
