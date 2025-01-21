@@ -150,7 +150,7 @@ abstract class BaseSparkAction<ThisT> {
 
   protected Dataset<FileInfo> contentFileDS(Table table, Set<Long> snapshotIds) {
     Table serializableTable = SerializableTableWithSize.copyOf(table);
-    Broadcast<Table> tableBroadcast = sparkContext.broadcast(serializableTable);
+    Broadcast<Table> tableBroadcast = sparkContext.broadcast(table);
     int numShufflePartitions = spark.sessionState().conf().numShufflePartitions();
 
     Dataset<ManifestFileBean> manifestBeanDS =

@@ -97,7 +97,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.caseSensitive = readConf.caseSensitive();
     this.expectedSchema = SchemaParser.toJson(expectedSchema);
     this.localityPreferred = readConf.localityEnabled();
-    this.tableBroadcast = sparkContext.broadcast(SerializableTableWithSize.copyOf(table));
+    this.tableBroadcast = sparkContext.broadcast(table);
     this.splitSize = readConf.splitSize();
     this.splitLookback = readConf.splitLookback();
     this.splitOpenFileCost = readConf.splitOpenFileCost();

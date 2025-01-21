@@ -190,7 +190,7 @@ public class SparkDistributedDataScan extends BaseDistributedDataScan {
   private Broadcast<Table> tableBroadcast() {
     if (tableBroadcast == null) {
       Table serializableTable = SerializableTableWithSize.copyOf(table());
-      this.tableBroadcast = sparkContext.broadcast(serializableTable);
+      this.tableBroadcast = sparkContext.broadcast(table());
     }
 
     return tableBroadcast;

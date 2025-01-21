@@ -59,7 +59,6 @@ import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.spark.SparkContentFile;
 import org.apache.iceberg.spark.SparkDataFile;
 import org.apache.iceberg.spark.SparkDeleteFile;
-import org.apache.iceberg.spark.source.SerializableTableWithSize;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.ThreadPools;
@@ -378,7 +377,7 @@ public class RewriteManifestsSparkAction
 
   private ManifestWriterFactory manifestWriters() {
     return new ManifestWriterFactory(
-        sparkContext().broadcast(SerializableTableWithSize.copyOf(table)),
+        sparkContext().broadcast(table),
         formatVersion,
         spec.specId(),
         outputLocation,
