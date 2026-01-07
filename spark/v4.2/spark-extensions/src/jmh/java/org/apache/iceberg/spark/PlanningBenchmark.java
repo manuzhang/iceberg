@@ -73,8 +73,8 @@ import org.openjdk.jmh.infra.Blackhole;
 /**
  * A benchmark that evaluates the job planning performance.
  *
- * <p>To run this benchmark for spark-4.1: <code>
- *   ./gradlew -DsparkVersions=4.1 :iceberg-spark:iceberg-spark-extensions-4.1_2.13:jmh
+ * <p>To run this benchmark for spark-4.2: <code>
+ *   ./gradlew -DsparkVersions=4.2 :iceberg-spark:iceberg-spark-extensions-4.2_2.13:jmh
  *       -PjmhIncludeRegex=PlanningBenchmark
  *       -PjmhOutputPath=benchmark/iceberg-planning-benchmark.txt
  * </code>
@@ -215,7 +215,6 @@ public class PlanningBenchmark {
   private void setupSpark() {
     this.spark =
         SparkSession.builder()
-            .config(TestBase.DISABLE_UI)
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
             .config("spark.driver.maxResultSize", "8G")
             .config("spark.sql.extensions", IcebergSparkSessionExtensions.class.getName())

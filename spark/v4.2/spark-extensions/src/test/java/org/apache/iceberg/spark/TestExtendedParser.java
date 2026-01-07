@@ -49,12 +49,7 @@ public class TestExtendedParser {
 
   @BeforeAll
   public static void before() {
-    spark =
-        SparkSession.builder()
-            .master("local")
-            .appName("TestExtendedParser")
-            .config(TestBase.DISABLE_UI)
-            .getOrCreate();
+    spark = SparkSession.builder().master("local").appName("TestExtendedParser").getOrCreate();
   }
 
   @AfterAll

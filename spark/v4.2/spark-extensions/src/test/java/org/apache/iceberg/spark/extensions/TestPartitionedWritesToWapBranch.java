@@ -69,7 +69,6 @@ public class TestPartitionedWritesToWapBranch extends PartitionedWritesTestBase 
             .config("spark.sql.shuffle.partitions", "4")
             .config("spark.sql.hive.metastorePartitionPruningFallbackOnException", "true")
             .config("spark.sql.legacy.respectNullabilityInTextDatasetConversion", "true")
-            .config(TestBase.DISABLE_UI)
             .enableHiveSupport()
             .getOrCreate();
 

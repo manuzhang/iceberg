@@ -24,7 +24,6 @@ import static org.apache.iceberg.PlanningMode.LOCAL;
 import java.util.Arrays;
 import java.util.List;
 import org.apache.iceberg.spark.SparkReadConf;
-import org.apache.iceberg.spark.TestBase;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.internal.SQLConf;
 import org.junit.jupiter.api.AfterAll;
@@ -63,7 +62,6 @@ public class TestSparkDistributedDataScanReporting
             .master("local[2]")
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
             .config(SQLConf.SHUFFLE_PARTITIONS().key(), "4")
-            .config(TestBase.DISABLE_UI)
             .getOrCreate();
   }
 

@@ -31,7 +31,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.SparkSessionCatalog;
-import org.apache.iceberg.spark.TestBase;
 import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions;
 import org.apache.iceberg.util.ThreadPools;
 import org.apache.spark.sql.SparkSession;
@@ -55,8 +54,8 @@ import org.openjdk.jmh.infra.Blackhole;
 /**
  * A benchmark that evaluates the delete file index build and lookup performance.
  *
- * <p>To run this benchmark for spark-4.1: <code>
- *   ./gradlew -DsparkVersions=4.1 :iceberg-spark:iceberg-spark-extensions-4.1_2.13:jmh
+ * <p>To run this benchmark for spark-4.2: <code>
+ *   ./gradlew -DsparkVersions=4.2 :iceberg-spark:iceberg-spark-extensions-4.2_2.13:jmh
  *       -PjmhIncludeRegex=DeleteFileIndexBenchmark
  *       -PjmhOutputPath=benchmark/iceberg-delete-file-index-benchmark.txt
  * </code>
@@ -206,7 +205,6 @@ public class DeleteFileIndexBenchmark {
   private void setupSpark() {
     this.spark =
         SparkSession.builder()
-            .config(TestBase.DISABLE_UI)
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
             .config("spark.sql.extensions", IcebergSparkSessionExtensions.class.getName())
             .config("spark.sql.catalog.spark_catalog", SparkSessionCatalog.class.getName())

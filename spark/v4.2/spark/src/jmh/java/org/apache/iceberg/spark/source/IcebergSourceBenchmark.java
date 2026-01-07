@@ -30,7 +30,6 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.UpdateProperties;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkSchemaUtil;
-import org.apache.iceberg.spark.TestBase;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SaveMode;
@@ -95,7 +94,7 @@ public abstract class IcebergSourceBenchmark {
   }
 
   protected void setupSpark(boolean enableDictionaryEncoding) {
-    SparkSession.Builder builder = SparkSession.builder().config(TestBase.DISABLE_UI);
+    SparkSession.Builder builder = SparkSession.builder();
     if (!enableDictionaryEncoding) {
       builder
           .config("parquet.dictionary.page.size", "1")

@@ -19,7 +19,6 @@
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.ViewUtil.IcebergViewHelper
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
@@ -107,7 +106,7 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
 
     // Apply any necessary rewrites to preserve correct resolution
     val viewCatalogAndNamespace: Seq[String] = view.currentCatalog +: view.currentNamespace.toSeq
-    val rewritten = rewriteIdentifiers(parsed, viewCatalogAndNamespace);
+    val rewritten = rewriteIdentifiers(parsed, viewCatalogAndNamespace)
 
     // Apply the field aliases and column comments
     // This logic differs from how Spark handles views in SessionCatalog.fromCatalogTable.
@@ -178,6 +177,6 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
   }
 
   private def isBuiltinFunction(name: String): Boolean = {
-    catalogManager.v1SessionCatalog.isBuiltinFunction(FunctionIdentifier(name))
+    catalogManager.v1SessionCatalog.isBuiltinFunction(name)
   }
 }

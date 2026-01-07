@@ -49,7 +49,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.SparkSessionCatalog;
-import org.apache.iceberg.spark.TestBase;
 import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -235,7 +234,6 @@ public class DVReaderBenchmark {
   private void setupSpark() {
     this.spark =
         SparkSession.builder()
-            .config(TestBase.DISABLE_UI)
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
             .config("spark.sql.catalog.spark_catalog", SparkSessionCatalog.class.getName())
             .config("spark.sql.catalog.spark_catalog.type", "hadoop")
