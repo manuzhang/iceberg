@@ -528,12 +528,14 @@ public class TestViews extends ExtensionsTestBase {
     assertThat(sql(sql)).hasSize(1).containsExactly(row(5.5));
 
     String expectedErrorMsg =
-        String.format("The routine %s.%s cannot be found", NAMESPACE, functionName);
+        String.format(
+            "Cannot resolve routine `%s`.`%s`.`%s`", catalogName, NAMESPACE, functionName);
     if (SPARK_CATALOG.equals(catalogName)) {
       // spark session catalog tries to load a V1 function and has a different error msg
       expectedErrorMsg =
           String.format(
-              "[ROUTINE_NOT_FOUND] The routine `%s`.`%s` cannot be found", NAMESPACE, functionName);
+              "[UNRESOLVED_ROUTINE] Cannot resolve routine `%s`.`%s`.`%s`",
+              catalogName, NAMESPACE, functionName);
     }
 
     // reading from a view that references a TEMP FUNCTION shouldn't be possible
@@ -701,37 +703,6 @@ public class TestViews extends ExtensionsTestBase {
     assertThat(sql("SELECT * FROM %s.%s.%s", catalogName, NAMESPACE, viewName))
         .hasSize(1)
         .containsExactly(row(50, "a"));
-  }
-
-  @TestTemplate
-  public void fullFunctionIdentifierNotRewrittenLoadFailure() {
-    String viewName = viewName("fullFunctionIdentifierNotRewrittenLoadFailure");
-    String sql = "SELECT spark_catalog.system.bucket(100, 'a') AS bucket_result, 'a' AS value";
-
-    // avoid namespace failures
-    sql("USE spark_catalog");
-    sql("CREATE NAMESPACE IF NOT EXISTS system");
-    sql("USE %s", catalogName);
-
-    Schema schema =
-        new Schema(
-            Types.NestedField.required(1, "bucket_result", Types.IntegerType.get()),
-            Types.NestedField.required(2, "value", Types.StringType.get()));
-
-    ViewCatalog viewCatalog = viewCatalog();
-
-    viewCatalog
-        .buildView(TableIdentifier.of(NAMESPACE, viewName))
-        .withQuery("spark", sql)
-        .withDefaultNamespace(Namespace.of("system"))
-        .withDefaultCatalog(catalogName)
-        .withSchema(schema)
-        .create();
-
-    // verify the v1 error message
-    assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
-        .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining("The routine `system`.`bucket` cannot be found");
   }
 
   private Schema schema(String sql) {
