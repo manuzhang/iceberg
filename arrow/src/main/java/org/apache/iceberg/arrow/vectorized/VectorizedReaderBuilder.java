@@ -155,6 +155,31 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
   }
 
   @Override
+  public VectorizedReader<?> variant(
+      Types.VariantType expected, GroupType variantGroup, VectorizedReader<?> result) {
+    if (expected == null || variantGroup.getId() == null) {
+      return null;
+    }
+
+    int parquetFieldId = variantGroup.getId().intValue();
+    Types.NestedField icebergField = icebergSchema.findField(parquetFieldId);
+    if (icebergField == null) {
+      return null;
+    }
+
+    // Find metadata and value column descriptors
+    String[] metadataPath = path("metadata");
+    String[] valuePath = path("value");
+
+    ColumnDescriptor metadataDesc = parquetSchema.getColumnDescription(metadataPath);
+    ColumnDescriptor valueDesc = parquetSchema.getColumnDescription(valuePath);
+
+    // Create variant reader with both columns
+    return new VectorizedVariantReader(
+        metadataDesc, valueDesc, icebergField, rootAllocator, setArrowValidityVector);
+  }
+
+  @Override
   public VectorizedReader<?> primitive(
       org.apache.iceberg.types.Type.PrimitiveType expected, PrimitiveType primitive) {
 
