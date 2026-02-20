@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -59,7 +60,9 @@ public class TestVectorizedVariantReads {
   public void testSerializedVariantPrimitives() throws IOException {
     // Create test data with simple variant primitives
     // Empty metadata: version (1 byte) + offset size (1 byte) + sorted fields (1 byte) + empty dict (1 byte) = 4 bytes
-    ByteBuffer emptyMetadata = ByteBuffer.allocate(4).put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
+    ByteBuffer emptyMetadata = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
     emptyMetadata.rewind();
     VariantMetadata metadata = Variants.metadata(emptyMetadata);
 
@@ -86,7 +89,9 @@ public class TestVectorizedVariantReads {
   public void testSerializedVariantWithMetadata() throws IOException {
     // Create test data with variant objects that have metadata
     // For simplicity, use empty metadata in this test too
-    ByteBuffer metadataBuffer = ByteBuffer.allocate(4).put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
+    ByteBuffer metadataBuffer = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
     metadataBuffer.rewind();
     VariantMetadata metadata = Variants.metadata(metadataBuffer);
 
@@ -106,7 +111,9 @@ public class TestVectorizedVariantReads {
   @Test
   public void testVariantBatchReading() throws IOException {
     // Test reading variants in batches
-    ByteBuffer emptyMetadata = ByteBuffer.allocate(4).put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
+    ByteBuffer emptyMetadata = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
     emptyMetadata.rewind();
     VariantMetadata metadata = Variants.metadata(emptyMetadata);
 
@@ -129,7 +136,9 @@ public class TestVectorizedVariantReads {
   @Test
   public void testVariantWithNulls() throws IOException {
     // Test reading variants with null values
-    ByteBuffer emptyMetadata = ByteBuffer.allocate(4).put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
+    ByteBuffer emptyMetadata = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .put((byte) 1).put((byte) 0).put((byte) 1).put((byte) 0);
     emptyMetadata.rewind();
     VariantMetadata metadata = Variants.metadata(emptyMetadata);
 
@@ -171,6 +180,7 @@ public class TestVectorizedVariantReads {
    */
   private File writeTestData(List<Record> records) throws IOException {
     File testFile = File.createTempFile("variant_test", ".parquet", tempDir);
+    assertThat(testFile.delete()).isTrue(); // Delete the file so Parquet writer can create it
     try (FileAppender<Record> writer =
         Parquet.write(Files.localOutput(testFile))
             .schema(SCHEMA)
