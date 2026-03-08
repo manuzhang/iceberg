@@ -51,6 +51,7 @@ public class TableScanUtil {
 
   private TableScanUtil() {}
 
+  @Deprecated
   public static boolean hasDeletes(CombinedScanTask task) {
     return task.files().stream().anyMatch(TableScanUtil::hasDeletes);
   }
@@ -59,6 +60,7 @@ public class TableScanUtil {
    * This is temporarily introduced since we plan to support pos-delete vectorized read first, then
    * get to the equality-delete support. We will remove this method once both are supported.
    */
+  @Deprecated
   public static boolean hasEqDeletes(CombinedScanTask task) {
     return task.files().stream()
         .anyMatch(
