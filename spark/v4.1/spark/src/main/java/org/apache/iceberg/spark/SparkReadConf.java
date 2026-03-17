@@ -57,8 +57,6 @@ public class SparkReadConf {
 
   private final SparkSession spark;
   private final Table table;
-  private final String branch;
-  private final CaseInsensitiveStringMap options;
   private final SparkConfParser confParser;
 
   public SparkReadConf(SparkSession spark, Table table) {
@@ -69,12 +67,15 @@ public class SparkReadConf {
     this(spark, table, null, options);
   }
 
+  /**
+   * @deprecated since 1.11.0, will be removed in 1.12.0. Use {@link #SparkReadConf(SparkSession,
+   *     Table, CaseInsensitiveStringMap)} instead.
+   */
+  @Deprecated
   public SparkReadConf(
       SparkSession spark, Table table, String branch, CaseInsensitiveStringMap options) {
     this.spark = spark;
     this.table = table;
-    this.branch = branch;
-    this.options = options;
     this.confParser = new SparkConfParser(spark, table, options);
   }
 
