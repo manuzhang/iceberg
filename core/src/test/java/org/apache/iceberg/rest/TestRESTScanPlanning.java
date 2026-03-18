@@ -1093,18 +1093,20 @@ public class TestRESTScanPlanning extends TestBaseWithRESTServer {
     assertThat(table.io().properties()).doesNotContainKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
 
     TableScan tableScan = table.newScan();
-    assertThatThrownBy(tableScan::io)
+    assertThatThrownBy(() -> tableScan.fileIO().get())
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("FileIO is not available: planFiles() must be called first");
 
     // make sure remote scan planning is called and FileIO gets the planId
     assertThat(tableScan.planFiles()).hasSize(1);
     assertThat(table.io().properties()).doesNotContainKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
-    assertThat(tableScan.io().properties()).containsKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
-    String planId = tableScan.io().properties().get(RESTCatalogProperties.REST_SCAN_PLAN_ID);
+    assertThat(tableScan.fileIO().get().properties())
+        .containsKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
+    String planId =
+        tableScan.fileIO().get().properties().get(RESTCatalogProperties.REST_SCAN_PLAN_ID);
 
     TableScan newScan = table.newScan();
-    assertThatThrownBy(newScan::io)
+    assertThatThrownBy(() -> newScan.fileIO().get())
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("FileIO is not available: planFiles() must be called first");
 
@@ -1113,8 +1115,9 @@ public class TestRESTScanPlanning extends TestBaseWithRESTServer {
     assertThat(table.io().properties()).doesNotContainKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
 
     // make sure planIds are different for each scan
-    assertThat(newScan.io().properties()).containsKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
-    assertThat(newScan.io().properties().get(RESTCatalogProperties.REST_SCAN_PLAN_ID))
+    assertThat(newScan.fileIO().get().properties())
+        .containsKey(RESTCatalogProperties.REST_SCAN_PLAN_ID);
+    assertThat(newScan.fileIO().get().properties().get(RESTCatalogProperties.REST_SCAN_PLAN_ID))
         .isNotEqualTo(planId);
   }
 

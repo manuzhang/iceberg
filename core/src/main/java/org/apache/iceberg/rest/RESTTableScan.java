@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
@@ -129,10 +130,12 @@ class RESTTableScan extends DataTableScan {
   }
 
   @Override
-  public FileIO io() {
-    Preconditions.checkState(
-        null != scanFileIO, "FileIO is not available: planFiles() must be called first");
-    return scanFileIO;
+  public Supplier<FileIO> fileIO() {
+    return () -> {
+      Preconditions.checkState(
+          null != scanFileIO, "FileIO is not available: planFiles() must be called first");
+      return scanFileIO;
+    };
   }
 
   @Override
