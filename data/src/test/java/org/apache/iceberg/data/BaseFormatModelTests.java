@@ -127,17 +127,36 @@ public abstract class BaseFormatModelTests<T> {
     assertThat(dataFile.recordCount()).isEqualTo(engineRecords.size());
     assertThat(dataFile.format()).isEqualTo(fileFormat);
 
-    // Read back and verify
-    InputFile inputFile = encryptedFile.encryptingOutputFile().toInputFile();
-    List<Record> readRecords;
-    try (CloseableIterable<Record> reader =
-        FormatModelRegistry.readBuilder(fileFormat, Record.class, inputFile)
-            .project(schema)
-            .build()) {
-      readRecords = ImmutableList.copyOf(reader);
+    readAndAssertGenericRecords(fileFormat, schema, genericRecords);
+  }
+
+  /** Write with engine type T without explicit engineSchema, read with Generic Record */
+  @ParameterizedTest
+  @FieldSource("FORMAT_AND_GENERATOR")
+  void testDataWriterEngineWriteWithoutEngineSchema(
+      FileFormat fileFormat, DataGenerator dataGenerator) throws IOException {
+    Schema schema = dataGenerator.schema();
+    FileWriterBuilder<DataWriter<T>, Object> writerBuilder =
+        FormatModelRegistry.dataWriteBuilder(fileFormat, engineType(), encryptedFile);
+
+    DataWriter<T> writer = writerBuilder.schema(schema).spec(PartitionSpec.unpartitioned()).build();
+
+    List<Record> genericRecords = dataGenerator.generateRecords();
+    List<T> engineRecords = convertToEngineRecords(genericRecords, schema);
+
+    try (writer) {
+      for (T record : engineRecords) {
+        writer.write(record);
+      }
     }
 
-    DataTestHelpers.assertEquals(schema.asStruct(), genericRecords, readRecords);
+    DataFile dataFile = writer.toDataFile();
+
+    assertThat(dataFile).isNotNull();
+    assertThat(dataFile.recordCount()).isEqualTo(engineRecords.size());
+    assertThat(dataFile.format()).isEqualTo(fileFormat);
+
+    readAndAssertGenericRecords(fileFormat, schema, genericRecords);
   }
 
   @ParameterizedTest
@@ -212,17 +231,45 @@ public abstract class BaseFormatModelTests<T> {
     assertThat(deleteFile.format()).isEqualTo(fileFormat);
     assertThat(deleteFile.equalityFieldIds()).containsExactly(1);
 
-    // Read back and verify
-    InputFile inputFile = encryptedFile.encryptingOutputFile().toInputFile();
-    List<Record> readRecords;
-    try (CloseableIterable<Record> reader =
-        FormatModelRegistry.readBuilder(fileFormat, Record.class, inputFile)
-            .project(schema)
-            .build()) {
-      readRecords = ImmutableList.copyOf(reader);
+    readAndAssertGenericRecords(fileFormat, schema, genericRecords);
+  }
+
+  /**
+   * Write equality deletes with engine type T without explicit engineSchema, read with Generic
+   * Record
+   */
+  @ParameterizedTest
+  @FieldSource("FORMAT_AND_GENERATOR")
+  void testEqualityDeleteWriterEngineWriteWithoutEngineSchema(
+      FileFormat fileFormat, DataGenerator dataGenerator) throws IOException {
+    Schema schema = dataGenerator.schema();
+    FileWriterBuilder<EqualityDeleteWriter<T>, Object> writerBuilder =
+        FormatModelRegistry.equalityDeleteWriteBuilder(fileFormat, engineType(), encryptedFile);
+
+    EqualityDeleteWriter<T> writer =
+        writerBuilder
+            .schema(schema)
+            .spec(PartitionSpec.unpartitioned())
+            .equalityFieldIds(1)
+            .build();
+
+    List<Record> genericRecords = dataGenerator.generateRecords();
+    List<T> engineRecords = convertToEngineRecords(genericRecords, schema);
+
+    try (writer) {
+      for (T record : engineRecords) {
+        writer.write(record);
+      }
     }
 
-    DataTestHelpers.assertEquals(schema.asStruct(), genericRecords, readRecords);
+    DeleteFile deleteFile = writer.toDeleteFile();
+
+    assertThat(deleteFile).isNotNull();
+    assertThat(deleteFile.recordCount()).isEqualTo(engineRecords.size());
+    assertThat(deleteFile.format()).isEqualTo(fileFormat);
+    assertThat(deleteFile.equalityFieldIds()).containsExactly(1);
+
+    readAndAssertGenericRecords(fileFormat, schema, genericRecords);
   }
 
   @ParameterizedTest
@@ -304,17 +351,20 @@ public abstract class BaseFormatModelTests<T> {
     assertThat(deleteFile.recordCount()).isEqualTo(2);
     assertThat(deleteFile.format()).isEqualTo(fileFormat);
 
-    // Read back and verify
+    readAndAssertGenericRecords(fileFormat, positionDeleteSchema, records);
+  }
+
+  private void readAndAssertGenericRecords(
+      FileFormat fileFormat, Schema schema, List<Record> expected) throws IOException {
     InputFile inputFile = encryptedFile.encryptingOutputFile().toInputFile();
     List<Record> readRecords;
     try (CloseableIterable<Record> reader =
         FormatModelRegistry.readBuilder(fileFormat, Record.class, inputFile)
-            .project(positionDeleteSchema)
+            .project(schema)
             .build()) {
       readRecords = ImmutableList.copyOf(reader);
     }
-
-    DataTestHelpers.assertEquals(positionDeleteSchema.asStruct(), records, readRecords);
+    DataTestHelpers.assertEquals(schema.asStruct(), expected, readRecords);
   }
 
   private List<T> convertToEngineRecords(List<Record> records, Schema schema) {
