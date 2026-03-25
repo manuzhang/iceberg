@@ -94,6 +94,46 @@ jobs:
       if: matrix.jvm == 17
     - run: ./gradlew check -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true -x javadoc
       if: matrix.jvm != 17
+    - name: Coverage summary
+      if: matrix.jvm == 17
+      run: |
+        python3 - <<'EOF'
+        import re, os, sys
+        import xml.etree.ElementTree as ET
+
+        xml_path = './build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml'
+        try:
+            with open(xml_path) as f:
+                content = f.read()
+        except FileNotFoundError:
+            print(f'Coverage report not found: {xml_path}', file=sys.stderr)
+            sys.exit(0)
+
+        # Strip DOCTYPE to prevent external DTD fetch
+        content = re.sub(r'<!DOCTYPE[^>]*>', '', content)
+        root = ET.fromstring(content)
+
+        # Use only direct children of root <report> for aggregate totals
+        counters = {c.get('type'): (int(c.get('missed')), int(c.get('covered')))
+                    for c in root.findall('counter')}
+
+        order = ['INSTRUCTION', 'BRANCH', 'LINE', 'METHOD', 'CLASS']
+        lines = ['## JaCoCo Coverage\n', '| Type | Covered | Total | Coverage |',
+                 '|------|---------|-------|----------|']
+        for t in order:
+            if t in counters:
+                missed, covered = counters[t]
+                total = missed + covered
+                pct = covered / total * 100 if total else 0
+                lines.append(f'| {t} | {covered:,} | {total:,} | {pct:.1f}% |')
+
+        summary = '\n'.join(lines) + '\n'
+        print(summary)
+        summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary_file:
+            with open(summary_file, 'a') as f:
+                f.write(summary)
+        EOF
     - uses: codecov/codecov-action@v5
       if: matrix.jvm == 17
       with:
