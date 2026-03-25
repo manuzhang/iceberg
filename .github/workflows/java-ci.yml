@@ -90,15 +90,23 @@ jobs:
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: ${{ runner.os }}-gradle-
     - run: echo -e "$(ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1)\t$(hostname -f) $(hostname -s)" | sudo tee -a /etc/hosts
-    - run: ./gradlew check -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true -x javadoc
-    - run: ./gradlew jacocoRootReport -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true
+    - run: ./gradlew check jacocoRootReport -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true -x javadoc
       if: matrix.jvm == 17
+    - run: ./gradlew check -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true -x javadoc
+      if: matrix.jvm != 17
     - uses: codecov/codecov-action@v5
       if: matrix.jvm == 17
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         files: ./build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
         flags: java
         name: java-jdk17
+        fail_ci_if_error: false
+    - uses: actions/upload-artifact@v7
+      if: matrix.jvm == 17
+      with:
+        name: jacoco-report
+        path: build/reports/jacoco/jacocoRootReport/
     - uses: actions/upload-artifact@v7
       if: failure()
       with:
