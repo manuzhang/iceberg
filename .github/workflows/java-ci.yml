@@ -137,11 +137,10 @@ jobs:
     - uses: codecov/codecov-action@v5
       if: matrix.jvm == 17
       with:
-        token: ${{ secrets.CODECOV_TOKEN }}
         files: ./build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
         flags: java
         name: java-jdk17
-        fail_ci_if_error: false
+        fail_ci_if_error: true
     - uses: actions/upload-artifact@v7
       if: matrix.jvm == 17
       with:
