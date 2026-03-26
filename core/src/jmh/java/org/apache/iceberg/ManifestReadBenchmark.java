@@ -24,7 +24,6 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.io.CloseableIterator;
+import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
@@ -42,105 +42,193 @@ import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Timeout;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Blackhole;
 
+/**
+ * A benchmark that evaluates manifest-list materialization and manifest-entry scanning.
+ *
+ * <p>To run only manifest-list materialization: <code>
+ *   ./gradlew :iceberg-core:jmh -PjmhIncludeRegex=ManifestReadBenchmark.readManifestList
+ * </code>
+ *
+ * <p>To run only manifest-entry scanning: <code>
+ *   ./gradlew :iceberg-core:jmh -PjmhIncludeRegex=ManifestReadBenchmark.readManifestEntries
+ * </code>
+ */
 @Fork(1)
 @State(Scope.Benchmark)
+@Warmup(iterations = 3)
 @Measurement(iterations = 5)
 @BenchmarkMode(Mode.SingleShotTime)
 @Timeout(time = 1000, timeUnit = TimeUnit.HOURS)
 public class ManifestReadBenchmark {
-
-  private static final int NUM_FILES = 10;
-  private static final int NUM_ROWS = 100000;
   private static final int NUM_COLS = 10;
+  private static final long RANDOM_SEED = 1L;
+  private static final PartitionSpec SPEC = PartitionSpec.unpartitioned();
 
-  private String baseDir;
-  private String manifestListFile;
+  @State(Scope.Benchmark)
+  public static class ManifestListReadState extends BenchmarkState {
+    @Param({"1000", "10000", "100000"})
+    private int numFiles;
 
-  @Setup
-  public void before() {
-    baseDir =
-        Paths.get(new File(System.getProperty("java.io.tmpdir")).getAbsolutePath()).toString();
-    manifestListFile = String.format("%s/%s.avro", baseDir, UUID.randomUUID());
+    @Override
+    int numFiles() {
+      return numFiles;
+    }
 
-    Random random = new Random(System.currentTimeMillis());
-
-    try (ManifestListWriter listWriter =
-        ManifestLists.write(
-            1,
-            org.apache.iceberg.Files.localOutput(manifestListFile),
-            PlaintextEncryptionManager.instance(),
-            0,
-            1L,
-            0,
-            0L)) {
-      for (int i = 0; i < NUM_FILES; i++) {
-        OutputFile manifestFile =
-            org.apache.iceberg.Files.localOutput(
-                String.format("%s/%s.avro", baseDir, UUID.randomUUID()));
-
-        ManifestWriter<DataFile> writer =
-            ManifestFiles.write(1, PartitionSpec.unpartitioned(), manifestFile, 1L);
-        try (ManifestWriter<DataFile> finalWriter = writer) {
-          for (int j = 0; j < NUM_ROWS; j++) {
-            DataFile dataFile =
-                DataFiles.builder(PartitionSpec.unpartitioned())
-                    .withFormat(FileFormat.PARQUET)
-                    .withPath(String.format("/path/to/data-%s-%s.parquet", i, j))
-                    .withFileSizeInBytes(j)
-                    .withRecordCount(j)
-                    .withMetrics(randomMetrics(random))
-                    .build();
-            finalWriter.add(dataFile);
-          }
-        } catch (IOException e) {
-          throw new UncheckedIOException(e);
-        }
-
-        listWriter.add(writer.toManifestFile());
-      }
-    } catch (IOException e) {
-      throw new UncheckedIOException(e);
+    @Override
+    int numRows() {
+      return 1;
     }
   }
 
-  @TearDown
-  public void after() throws IOException {
-    if (baseDir != null) {
-      try (Stream<Path> walk = Files.walk(Paths.get(baseDir))) {
-        walk.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
-      }
-      baseDir = null;
+  @State(Scope.Benchmark)
+  public static class ManifestEntriesReadState extends BenchmarkState {
+    @Param({"1000"})
+    private int numFiles;
+
+    @Param({"100000"})
+    private int numRows;
+
+    @Override
+    int numFiles() {
+      return numFiles;
     }
 
-    manifestListFile = null;
+    @Override
+    int numRows() {
+      return numRows;
+    }
+  }
+
+  public abstract static class BenchmarkState {
+    private Path baseDir;
+    private InputFile manifestListInputFile;
+    private List<ManifestFile> manifests;
+    private TestTables.LocalFileIO fileIO;
+    private Map<Integer, PartitionSpec> specs;
+
+    abstract int numFiles();
+
+    abstract int numRows();
+
+    InputFile manifestListInputFile() {
+      return manifestListInputFile;
+    }
+
+    List<ManifestFile> manifests() {
+      return manifests;
+    }
+
+    TestTables.LocalFileIO fileIO() {
+      return fileIO;
+    }
+
+    Map<Integer, PartitionSpec> specs() {
+      return specs;
+    }
+
+    @Setup
+    public void before() {
+      try {
+        baseDir = Files.createTempDirectory("manifest-read-benchmark-");
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+
+      String manifestListFile =
+          baseDir.resolve(String.format("%s.avro", UUID.randomUUID())).toString();
+      Random random = new Random(RANDOM_SEED);
+
+      try (ManifestListWriter listWriter =
+          ManifestLists.write(
+              1,
+              org.apache.iceberg.Files.localOutput(manifestListFile),
+              PlaintextEncryptionManager.instance(),
+              0,
+              1L,
+              0,
+              0L)) {
+        for (int i = 0; i < numFiles(); i++) {
+          OutputFile manifestFile =
+              org.apache.iceberg.Files.localOutput(
+                  baseDir.resolve(String.format("%s.avro", UUID.randomUUID())).toString());
+
+          ManifestWriter<DataFile> writer = ManifestFiles.write(1, SPEC, manifestFile, 1L);
+          try (ManifestWriter<DataFile> finalWriter = writer) {
+            for (int j = 0; j < numRows(); j++) {
+              DataFile dataFile =
+                  DataFiles.builder(SPEC)
+                      .withFormat(FileFormat.PARQUET)
+                      .withPath(String.format("/path/to/data-%s-%s.parquet", i, j))
+                      .withFileSizeInBytes(j)
+                      .withRecordCount(j)
+                      .withMetrics(randomMetrics(random))
+                      .build();
+              finalWriter.add(dataFile);
+            }
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+
+          listWriter.add(writer.toManifestFile());
+        }
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+
+      this.manifestListInputFile = org.apache.iceberg.Files.localInput(manifestListFile);
+      this.manifests = ManifestLists.read(manifestListInputFile);
+      this.fileIO = new TestTables.LocalFileIO();
+      this.specs = ImmutableMap.of(SPEC.specId(), SPEC);
+    }
+
+    @TearDown
+    public void after() throws IOException {
+      if (baseDir != null) {
+        try (Stream<Path> walk = Files.walk(baseDir)) {
+          walk.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+        }
+        baseDir = null;
+      }
+
+      manifestListInputFile = null;
+      manifests = null;
+      fileIO = null;
+      specs = null;
+    }
   }
 
   @Benchmark
   @Threads(1)
-  public void readManifestFile() throws IOException {
-    List<ManifestFile> manifests =
-        ManifestLists.read(org.apache.iceberg.Files.localInput(manifestListFile));
-    TestTables.LocalFileIO fileIO = new TestTables.LocalFileIO();
-    Map<Integer, PartitionSpec> specs =
-        ImmutableMap.of(PartitionSpec.unpartitioned().specId(), PartitionSpec.unpartitioned());
-    for (ManifestFile manifestFile : manifests) {
-      ManifestReader<DataFile> reader = ManifestFiles.read(manifestFile, fileIO, specs);
+  public void readManifestList(ManifestListReadState state, Blackhole blackhole) {
+    blackhole.consume(ManifestLists.read(state.manifestListInputFile()));
+  }
+
+  @Benchmark
+  @Threads(1)
+  public void readManifestEntries(ManifestEntriesReadState state, Blackhole blackhole)
+      throws IOException {
+    for (ManifestFile manifestFile : state.manifests()) {
+      ManifestReader<DataFile> reader =
+          ManifestFiles.read(manifestFile, state.fileIO(), state.specs());
       try (CloseableIterator<DataFile> it = reader.iterator()) {
         while (it.hasNext()) {
-          it.next().recordCount();
+          blackhole.consume(it.next().recordCount());
         }
       }
     }
   }
 
-  private Metrics randomMetrics(Random random) {
+  private static Metrics randomMetrics(Random random) {
     long rowCount = 100000L + random.nextInt(1000);
     Map<Integer, Long> columnSizes = Maps.newHashMap();
     Map<Integer, Long> valueCounts = Maps.newHashMap();
