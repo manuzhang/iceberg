@@ -53,6 +53,12 @@ try {
   project.logger.error(e.getMessage())
 }
 
+apply plugin: 'jacoco'
+
+jacoco {
+  toolVersion = '0.8.13'
+}
+
 if (JavaVersion.current() == JavaVersion.VERSION_17 || JavaVersion.current() == JavaVersion.VERSION_21) {
   project.ext.jdkVersion = JavaVersion.current().getMajorVersion().toString()
   project.ext.extraJvmArgs = ["--add-opens", "java.base/java.io=ALL-UNNAMED",
@@ -130,10 +136,6 @@ subprojects {
 
   apply plugin: 'java-library'
   apply plugin: 'jacoco'
-
-  jacoco {
-    toolVersion = '0.8.13'
-  }
 
   if (project.name in REVAPI_PROJECTS) {
     apply plugin: 'org.revapi.revapi-gradle-plugin'
