@@ -90,6 +90,10 @@ jobs:
         restore-keys: ${{ runner.os }}-gradle-
     - run: echo -e "$(ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1)\t$(hostname -f) $(hostname -s)" | sudo tee -a /etc/hosts
     - run: ./gradlew check -DsparkVersions= -DflinkVersions= -DkafkaVersions= -Pquick=true -x javadoc
+    - uses: codecov/codecov-action@v5
+      with:
+        files: '**/build/reports/jacoco/test/jacocoTestReport.xml'
+        fail_ci_if_error: false
     - uses: actions/upload-artifact@v7
       if: failure()
       with:
