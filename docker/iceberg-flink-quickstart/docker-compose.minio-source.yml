@@ -1,0 +1,44 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+services:
+  minio:
+    pull_policy: never
+    image: minio/minio:source-${MINIO_SOURCE_TAG:-RELEASE.2025-10-15T17-29-55Z}
+    build:
+      context: https://github.com/minio/minio.git#${MINIO_SOURCE_TAG:-RELEASE.2025-10-15T17-29-55Z}
+      dockerfile_inline: |
+        # Build MinIO from source because some upstream releases are not published as Docker Hub tags.
+        FROM --platform=$$BUILDPLATFORM golang:1.24 AS build
+        ARG TARGETOS
+        ARG TARGETARCH
+        WORKDIR /src
+        COPY . .
+        RUN CGO_ENABLED=0 GOOS=$$TARGETOS GOARCH=$$TARGETARCH go build -o /out/minio .
+
+        FROM debian:bookworm-slim
+        RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+        COPY --from=build /out/minio /usr/bin/minio
+        ENTRYPOINT ["/usr/bin/minio"]
+        CMD ["server", "/data", "--console-address", ":9001"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

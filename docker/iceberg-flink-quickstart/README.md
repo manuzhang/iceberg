@@ -75,6 +75,29 @@ Start up the Docker containers:
 docker compose -f docker/iceberg-flink-quickstart/docker-compose.yml up -d --build
 ```
 
+The compose stack pins MinIO images to tested release tags by default. This avoids an arm64 crash in
+`minio/minio:latest` (`RELEASE.2025-09-07T16-13-09Z`) that causes the `minio` service to exit with code `139`.
+Override the defaults if needed:
+
+```sh
+MINIO_IMAGE_TAG=RELEASE.2025-07-23T15-54-02Z \
+MINIO_MC_IMAGE_TAG=RELEASE.2025-07-21T05-28-08Z \
+docker compose -f docker/iceberg-flink-quickstart/docker-compose.yml up -d --build
+```
+
+Some MinIO releases exist on GitHub without a matching `minio/minio:<tag>` image on Docker Hub. To build
+MinIO from an upstream Git tag instead of pulling a published image, add the source-build override file:
+
+```sh
+MINIO_SOURCE_TAG=RELEASE.2025-10-15T17-29-55Z \
+docker compose \
+  -f docker/iceberg-flink-quickstart/docker-compose.yml \
+  -f docker/iceberg-flink-quickstart/docker-compose.minio-source.yml \
+  up -d --build
+```
+
+This uses Compose's remote Git build context support and builds the `minio` service from the selected tag.
+
 Execute the test script directly from the host:
 
 ```bash
