@@ -127,6 +127,14 @@ subprojects {
   }
 
   apply plugin: 'java-library'
+  apply plugin: 'jacoco'
+
+  jacocoTestReport {
+    reports {
+      xml.required = true
+      html.required = false
+    }
+  }
 
   if (project.name in REVAPI_PROJECTS) {
     apply plugin: 'org.revapi.revapi-gradle-plugin'
@@ -258,6 +266,7 @@ subprojects {
     }
 
     systemProperty 'project.version', project.version
+    finalizedBy jacocoTestReport
   }
 
   plugins.withType(ScalaPlugin.class) {
