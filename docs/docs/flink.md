@@ -182,7 +182,7 @@ Flink supports creating catalogs using Flink SQL.
 ### Catalog Configuration
 
 A catalog is created and named by executing the following query (replace `<catalog_name>` with your catalog name and
-`'<config_key>'='<config_value>'` with catalog implementation config):
+`'<config_key>' = '<config_value>'` with catalog implementation config):
 
 ```sql
 CREATE CATALOG <catalog_name> WITH (
