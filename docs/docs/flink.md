@@ -187,7 +187,7 @@ A catalog is created and named by executing the following query (replace `<catal
 ```sql
 CREATE CATALOG <catalog_name> WITH (
   'type'='iceberg',
-  '<config_key>'='<config_value>'
+  '<config_key>' = '<config_value>'
 );
 ```
 
