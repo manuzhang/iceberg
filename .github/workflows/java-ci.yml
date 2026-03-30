@@ -131,14 +131,14 @@ jobs:
             with open(summary_file, 'a') as f:
                 f.write(summary)
         EOF
-    - uses: codecov/codecov-action@v5
+    - uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
       if: matrix.jvm == 17
       with:
         files: ./build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
         flags: java
         name: java-jdk17
         fail_ci_if_error: true
-    - uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
       if: matrix.jvm == 17
       with:
         name: jacoco-report
