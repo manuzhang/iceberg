@@ -159,6 +159,7 @@ The `api/` module has the strongest stability guarantees — breaking changes ar
 - One concern per PR. Unrelated whitespace, import, or formatting changes go in separate PRs.
 - Keep first version of a PR minimal — defer recovery, optimization, and edge cases to follow-ups.
 - Commit messages describe the *what* and *why*, not implementation details.
+- Before creating or amending a commit, run the relevant code style check and fix any violations.
 - Apache License header required on all new files (enforced by spotless pre-commit hook).
 
 ## Boundaries
