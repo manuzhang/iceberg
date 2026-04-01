@@ -1,0 +1,90 @@
+plugins {
+  id 'java'
+  id 'application'
+  id 'com.diffplug.spotless' version '6.23.3'
+}
+
+group = 'io.github.manuzhang'
+version = '1.0.0-SNAPSHOT'
+
+java {
+  sourceCompatibility = JavaVersion.VERSION_17
+  targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+  mavenCentral()
+}
+
+ext {
+  beamVersion = '2.60.0'
+  hadoopVersion = '3.3.6'
+  icebergVersion = '1.10.0'
+}
+
+dependencies {
+  // Apache Iceberg core dependencies
+  implementation "org.apache.iceberg:iceberg-api:${icebergVersion}"
+  implementation "org.apache.iceberg:iceberg-core:${icebergVersion}"
+
+  // Apache Beam Iceberg I/O
+  implementation "org.apache.beam:beam-sdks-java-core:${beamVersion}"
+  implementation "org.apache.beam:beam-sdks-java-io-iceberg:${beamVersion}"
+  runtimeOnly "org.apache.beam:beam-runners-direct-java:${beamVersion}"
+  runtimeOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
+  runtimeOnly "org.apache.hadoop:hadoop-mapreduce-client-core:${hadoopVersion}"
+
+  // Logging
+  implementation 'org.slf4j:slf4j-simple:2.0.9'
+
+  // Testing
+  testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+  mainClass = 'io.github.manuzhang.iceberg.examples.BeamExample'
+}
+
+task runBeamExample(type: JavaExec) {
+  group = 'examples'
+  description = 'Run the Apache Beam read/write example'
+  mainClass = 'io.github.manuzhang.iceberg.examples.BeamExample'
+  classpath = sourceSets.main.runtimeClasspath
+}
+
+test {
+  useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile) {
+  options.encoding = 'UTF-8'
+}
+
+// Spotless configuration for code formatting
+spotless {
+  java {
+    target 'src/**/*.java'
+
+    googleJavaFormat()
+
+    // Remove unused imports
+    removeUnusedImports()
+
+    // Ensure files end with newline
+    endWithNewline()
+
+    // Trim trailing whitespace
+    trimTrailingWhitespace()
+
+    // Format imports in alphabetic order
+    importOrder()
+  }
+
+  format 'misc', {
+    target '*.gradle', '*.md', '.gitignore'
+
+    trimTrailingWhitespace()
+    endWithNewline()
+  }
+}
