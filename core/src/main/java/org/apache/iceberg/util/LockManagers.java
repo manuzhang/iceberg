@@ -81,12 +81,14 @@ public class LockManagers {
   public abstract static class BaseLockManager implements LockManager {
 
     private static volatile ScheduledExecutorService scheduler;
+    private static int activeManagers = 0;
 
     private long acquireTimeoutMs;
     private long acquireIntervalMs;
     private long heartbeatIntervalMs;
     private long heartbeatTimeoutMs;
     private int heartbeatThreads;
+    private boolean registered = false;
 
     public long heartbeatTimeoutMs() {
       return heartbeatTimeoutMs;
@@ -108,24 +110,30 @@ public class LockManagers {
       return heartbeatThreads;
     }
 
-    public ScheduledExecutorService scheduler() {
-      if (scheduler == null) {
-        synchronized (BaseLockManager.class) {
-          if (scheduler == null) {
-            scheduler =
-                MoreExecutors.getExitingScheduledExecutorService(
-                    (ScheduledThreadPoolExecutor)
-                        Executors.newScheduledThreadPool(
-                            heartbeatThreads(),
-                            new ThreadFactoryBuilder()
-                                .setDaemon(true)
-                                .setNameFormat("iceberg-lock-manager-%d")
-                                .build()));
-          }
-        }
-      }
+    ScheduledExecutorService newScheduler() {
+      return MoreExecutors.getExitingScheduledExecutorService(
+          (ScheduledThreadPoolExecutor)
+              Executors.newScheduledThreadPool(
+                  heartbeatThreads(),
+                  new ThreadFactoryBuilder()
+                      .setDaemon(true)
+                      .setNameFormat("iceberg-lock-manager-%d")
+                      .build()));
+    }
 
-      return scheduler;
+    public ScheduledExecutorService scheduler() {
+      synchronized (BaseLockManager.class) {
+        if (!registered) {
+          activeManagers += 1;
+          registered = true;
+        }
+
+        if (scheduler == null || scheduler.isShutdown() || scheduler.isTerminated()) {
+          scheduler = newScheduler();
+        }
+
+        return scheduler;
+      }
     }
 
     @Override
@@ -159,15 +167,28 @@ public class LockManagers {
 
     @Override
     public void close() throws Exception {
-      if (scheduler != null) {
-        List<Runnable> tasks = scheduler.shutdownNow();
-        tasks.forEach(
-            task -> {
-              if (task instanceof Future) {
-                ((Future<?>) task).cancel(true);
-              }
-            });
-        scheduler = null;
+      unregister();
+    }
+
+    protected boolean unregister() {
+      synchronized (BaseLockManager.class) {
+        if (registered) {
+          activeManagers -= 1;
+          registered = false;
+        }
+
+        if (activeManagers == 0 && scheduler != null) {
+          List<Runnable> tasks = scheduler.shutdownNow();
+          tasks.forEach(
+              task -> {
+                if (task instanceof Future) {
+                  ((Future<?>) task).cancel(true);
+                }
+              });
+          scheduler = null;
+        }
+
+        return activeManagers == 0;
       }
     }
   }
@@ -277,10 +298,11 @@ public class LockManagers {
 
     @Override
     public void close() throws Exception {
-      HEARTBEATS.values().forEach(future -> future.cancel(false));
-      HEARTBEATS.clear();
-      LOCKS.clear();
-      super.close();
+      if (unregister()) {
+        HEARTBEATS.values().forEach(future -> future.cancel(false));
+        HEARTBEATS.clear();
+        LOCKS.clear();
+      }
     }
   }
 

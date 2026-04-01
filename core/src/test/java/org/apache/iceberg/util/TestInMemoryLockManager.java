@@ -175,4 +175,22 @@ public class TestInMemoryLockManager {
         .as("only 1 thread should have acquired the lock")
         .isOne();
   }
+
+  @Test
+  public void testClosingOneManagerDoesNotBreakAnother() throws Exception {
+    LockManagers.InMemoryLockManager anotherManager =
+        new LockManagers.InMemoryLockManager(Maps.newHashMap());
+
+    try {
+      lockManager.close();
+      assertThat(anotherManager.acquire(lockEntityId, ownerId)).isTrue();
+      assertThat(anotherManager.release(lockEntityId, ownerId)).isTrue();
+      lockManager = anotherManager;
+      anotherManager = null;
+    } finally {
+      if (anotherManager != null) {
+        anotherManager.close();
+      }
+    }
+  }
 }
