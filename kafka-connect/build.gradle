@@ -167,7 +167,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
       exclude group: 'org.apache.hive', module: 'hive-service-rpc'
       exclude group: 'com.github.joshelser', module: 'dropwizard-metrics-hadoop-metrics2-reporter'
     }
-    hive(libs.hadoop3.client) {
+    hive("org.apache.hadoop:hadoop-hdfs-client:${libs.versions.hadoop3.get()}") {
       exclude group: 'org.apache.avro', module: 'avro'
       exclude group: 'org.slf4j', module: 'slf4j-log4j12'
     }
