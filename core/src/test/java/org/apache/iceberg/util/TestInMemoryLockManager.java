@@ -21,6 +21,7 @@ package org.apache.iceberg.util;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -205,6 +206,28 @@ public class TestInMemoryLockManager {
     // With the fix, scheduler() detects isShutdown() and transparently recreates the executor.
     assertThat(lockManager.acquire(lockEntityId, ownerId))
         .as("acquire must succeed even when the shared scheduler was previously shut down")
+        .isTrue();
+  }
+
+  /**
+   * Tests the {@code scheduler == null} branch of the double-checked locking guard in {@code
+   * scheduler()}.
+   *
+   * <p>The scheduler field is static; setting it to null via reflection simulates a cold start (no
+   * prior scheduler has been created). {@code acquire()} must still succeed, proving that {@code
+   * scheduler()} correctly initializes the executor from null.
+   */
+  @Test
+  public void testAcquireSucceedsWhenSharedSchedulerIsNull() throws Exception {
+    Field schedulerField = LockManagers.BaseLockManager.class.getDeclaredField("scheduler");
+    schedulerField.setAccessible(true);
+
+    // Null out the static scheduler to simulate a cold-start (scheduler == null branch)
+    schedulerField.set(null, null);
+    assertThat(schedulerField.get(null)).isNull();
+
+    assertThat(lockManager.acquire(lockEntityId, ownerId))
+        .as("acquire must succeed when the shared scheduler is null (cold start)")
         .isTrue();
   }
 }
