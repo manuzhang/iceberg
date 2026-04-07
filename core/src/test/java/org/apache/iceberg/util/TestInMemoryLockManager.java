@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.iceberg.CatalogProperties;
@@ -176,29 +177,34 @@ public class TestInMemoryLockManager {
         .isOne();
   }
 
+  /**
+   * Regression test for the race condition where one catalog's close() shuts down the shared static
+   * scheduler while another catalog is still using it.
+   *
+   * <p>The real race: a thread holds a reference to the scheduler (obtained via scheduler()) and
+   * then another thread shuts it down. When the first thread calls scheduleAtFixedRate it gets a
+   * RejectedExecutionException. The fix adds an isShutdown() guard to scheduler() so it recreates
+   * the executor when it has been terminated.
+   *
+   * <p>This test verifies the guard by shutting down the shared scheduler directly (leaving the
+   * field non-null but terminated) and then requiring that a subsequent acquire() still succeeds.
+   */
   @Test
-  public void testClosingOneLockManagerDoesNotAffectAnother() throws Exception {
-    LockManagers.InMemoryLockManager first =
-        new LockManagers.InMemoryLockManager(Maps.newHashMap());
-    LockManagers.InMemoryLockManager second =
-        new LockManagers.InMemoryLockManager(Maps.newHashMap());
+  public void testAcquireSucceedsWhenSharedSchedulerWasShutDown() {
+    // Prime the shared scheduler (equivalent to another catalog already running)
+    ScheduledExecutorService sharedScheduler = lockManager.scheduler();
 
-    try {
-      assertThat(first.acquire(lockEntityId, ownerId)).isTrue();
-      first.release(lockEntityId, ownerId);
+    // Simulate the scheduler being shut down externally (e.g., by old close() behaviour of
+    // another catalog) without nullifying the field, leaving a non-null but terminated reference.
+    sharedScheduler.shutdownNow();
+    assertThat(sharedScheduler.isShutdown()).isTrue();
 
-      // Close the first lock manager (simulating one catalog being closed)
-      first.close();
-
-      // The second lock manager must still be able to acquire locks after first is closed
-      String secondOwner = UUID.randomUUID().toString();
-      String secondEntityId = UUID.randomUUID().toString();
-      assertThat(second.acquire(secondEntityId, secondOwner))
-          .as("second lock manager should still be able to acquire locks after first is closed")
-          .isTrue();
-      assertThat(second.release(secondEntityId, secondOwner)).isTrue();
-    } finally {
-      second.close();
-    }
+    // Without the isShutdown() guard in scheduler(), lockManager.acquire() would:
+    //   1. call scheduler() → scheduler != null → return the shut-down executor
+    //   2. call scheduleAtFixedRate on a terminated executor → RejectedExecutionException
+    // With the fix, scheduler() detects isShutdown() and transparently recreates the executor.
+    assertThat(lockManager.acquire(lockEntityId, ownerId))
+        .as("acquire must succeed even when the shared scheduler was previously shut down")
+        .isTrue();
   }
 }
