@@ -7,15 +7,6 @@ The Apache Software Foundation (http://www.apache.org/).
 
 --------------------------------------------------------------------------------
 
-This product bundles Apache Parquet Format with the following in its NOTICE file:
-| Apache Parquet Format
-| Copyright 2022 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (http://www.apache.org/).
-
---------------------------------------------------------------------------------
-
 This product bundles Jakarta Activation API with the following in its NOTICE file:
 | # Notices for Eclipse Project for JAF
 |
@@ -106,88 +97,7 @@ This product bundles Jackson JSON Processor with the following in its NOTICE fil
 | See FastDoubleParser-NOTICE for details of other source code included in FastDoubleParser
 | and the licenses and copyrights that apply to that code.
 
---------------------------------------------------------------------------------
-
-This product bundles Apache Commons Codec with the following in its NOTICE file:
-| Apache Commons Codec
-| Copyright 2002-2024 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache Commons IO with the following in its NOTICE file:
-| Apache Commons IO
-| Copyright 2002-2024 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache Avro with the following in its NOTICE file:
-| Apache Avro
-| Copyright 2009-2024 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache Commons Compress with the following in its NOTICE file:
-| Apache Commons Compress
-| Copyright 2002-2024 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache Commons Lang with the following in its NOTICE file:
-| Apache Commons Lang
-| Copyright 2001-2023 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache Commons Configuration with the following in its NOTICE file:
-| Apache Commons Configuration
-| Copyright 2001-2024 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache HttpClient with the following in its NOTICE file:
-| Apache HttpClient
-| Copyright 1999-2021 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache HttpComponents Core HTTP/1.1 with the following in its NOTICE file:
-| Apache HttpComponents Core HTTP/1.1
-| Copyright 2005-2021 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
-
-This product bundles Apache HttpComponents Core HTTP/2 with the following in its NOTICE file:
-| Apache HttpComponents Core HTTP/2
-| Copyright 2005-2021 The Apache Software Foundation
-|
-| This product includes software developed at
-| The Apache Software Foundation (https://www.apache.org/).
-
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------
 
 This product bundles Apache Hadoop with the following in its NOTICE file:
 | Apache Hadoop
