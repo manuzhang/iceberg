@@ -18,11 +18,9 @@
  */
 package org.apache.iceberg.util;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -109,9 +107,12 @@ public class LockManagers {
     }
 
     public ScheduledExecutorService scheduler() {
-      if (scheduler == null) {
+      // The shared scheduler is intentionally never shut down by BaseLockManager#close(),
+      // but callers can still obtain and shut it down directly. Recreate it defensively if
+      // this happens to avoid RejectedExecutionException when scheduling heartbeats.
+      if (scheduler == null || scheduler.isShutdown()) {
         synchronized (BaseLockManager.class) {
-          if (scheduler == null) {
+          if (scheduler == null || scheduler.isShutdown()) {
             scheduler =
                 MoreExecutors.getExitingScheduledExecutorService(
                     (ScheduledThreadPoolExecutor)
@@ -159,16 +160,10 @@ public class LockManagers {
 
     @Override
     public void close() throws Exception {
-      if (scheduler != null) {
-        List<Runnable> tasks = scheduler.shutdownNow();
-        tasks.forEach(
-            task -> {
-              if (task instanceof Future) {
-                ((Future<?>) task).cancel(true);
-              }
-            });
-        scheduler = null;
-      }
+      // The scheduler is a shared static resource used across all BaseLockManager instances.
+      // Individual instances must not shut it down, as other instances may still be using it.
+      // The scheduler uses daemon threads and will be terminated at JVM exit by the shutdown
+      // hook registered via MoreExecutors.getExitingScheduledExecutorService.
     }
   }
 
