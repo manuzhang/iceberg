@@ -175,4 +175,30 @@ public class TestInMemoryLockManager {
         .as("only 1 thread should have acquired the lock")
         .isOne();
   }
+
+  @Test
+  public void testClosingOneLockManagerDoesNotAffectAnother() throws Exception {
+    LockManagers.InMemoryLockManager first =
+        new LockManagers.InMemoryLockManager(Maps.newHashMap());
+    LockManagers.InMemoryLockManager second =
+        new LockManagers.InMemoryLockManager(Maps.newHashMap());
+
+    try {
+      assertThat(first.acquire(lockEntityId, ownerId)).isTrue();
+      first.release(lockEntityId, ownerId);
+
+      // Close the first lock manager (simulating one catalog being closed)
+      first.close();
+
+      // The second lock manager must still be able to acquire locks after first is closed
+      String secondOwner = UUID.randomUUID().toString();
+      String secondEntityId = UUID.randomUUID().toString();
+      assertThat(second.acquire(secondEntityId, secondOwner))
+          .as("second lock manager should still be able to acquire locks after first is closed")
+          .isTrue();
+      assertThat(second.release(secondEntityId, secondOwner)).isTrue();
+    } finally {
+      second.close();
+    }
+  }
 }
