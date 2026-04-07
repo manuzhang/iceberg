@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.iceberg.CatalogProperties;
@@ -174,5 +175,17 @@ public class TestInMemoryLockManager {
     assertThat(results.stream().filter(s -> s).count())
         .as("only 1 thread should have acquired the lock")
         .isOne();
+  }
+
+  @Test
+  public void testAcquireSucceedsWhenSharedSchedulerWasShutDown() throws Exception {
+    ScheduledExecutorService sharedScheduler = lockManager.scheduler();
+
+    sharedScheduler.shutdownNow();
+    assertThat(sharedScheduler.isShutdown()).isTrue();
+
+    assertThat(lockManager.acquire(lockEntityId, ownerId))
+        .as("acquire must succeed even when the shared scheduler was previously shut down")
+        .isTrue();
   }
 }
