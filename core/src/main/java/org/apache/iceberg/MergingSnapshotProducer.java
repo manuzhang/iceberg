@@ -42,7 +42,6 @@ import org.apache.iceberg.expressions.ManifestEvaluator;
 import org.apache.iceberg.expressions.Projections;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
-import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Predicate;
@@ -1161,7 +1160,7 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
       }
     }
 
-    FileIO fileIO = EncryptingFileIO.combine(ops().io(), ops().encryption());
+    EncryptingFileIO fileIO = EncryptingFileIO.combine(ops().io(), ops().encryption());
 
     String dvOutputLocation =
         ops()
