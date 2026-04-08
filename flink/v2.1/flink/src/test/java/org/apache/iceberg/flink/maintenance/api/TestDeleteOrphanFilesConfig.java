@@ -19,6 +19,7 @@
 package org.apache.iceberg.flink.maintenance.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.apache.flink.configuration.Configuration;
@@ -41,7 +42,7 @@ public class TestDeleteOrphanFilesConfig extends OperatorTestBase {
     input.put(DeleteOrphanFilesConfig.SCHEDULE_ON_INTERVAL_SECOND, "60");
     input.put(DeleteOrphanFilesConfig.MIN_AGE_SECONDS, "86400");
     input.put(DeleteOrphanFilesConfig.DELETE_BATCH_SIZE, "500");
-    input.put(DeleteOrphanFilesConfig.LOCATION, "/tmp/test-location");
+    input.put(DeleteOrphanFilesConfig.LOCATION, table.location() + "/test-location");
     input.put(DeleteOrphanFilesConfig.USE_PREFIX_LISTING, "true");
     input.put(DeleteOrphanFilesConfig.PLANNING_WORKER_POOL_SIZE, "4");
     input.put(DeleteOrphanFilesConfig.EQUAL_SCHEMES, "s3n=s3,s3a=s3");
@@ -62,7 +63,7 @@ public class TestDeleteOrphanFilesConfig extends OperatorTestBase {
     assertThat(config.scheduleOnIntervalSecond()).isEqualTo(60);
     assertThat(config.minAgeSeconds()).isEqualTo(86400L);
     assertThat(config.deleteBatchSize()).isEqualTo(500);
-    assertThat(config.location()).isEqualTo("/tmp/test-location");
+    assertThat(config.location()).isEqualTo(table.location() + "/test-location");
     assertThat(config.usePrefixListing()).isTrue();
     assertThat(config.planningWorkerPoolSize()).isEqualTo(4);
     assertThat(config.equalSchemes()).containsEntry("s3n", "s3").containsEntry("s3a", "s3");
@@ -87,5 +88,16 @@ public class TestDeleteOrphanFilesConfig extends OperatorTestBase {
     assertThat(config.equalSchemes()).containsEntry("s3n", "s3").containsEntry("s3a", "s3");
     assertThat(config.equalAuthorities()).isEqualTo(Map.of());
     assertThat(config.prefixMismatchMode()).isEqualTo(PrefixMismatchMode.ERROR);
+  }
+
+  @Test
+  void testLocationValidation() {
+    input.put(DeleteOrphanFilesConfig.LOCATION, table.location() + "-outside");
+
+    DeleteOrphanFilesConfig config = new DeleteOrphanFilesConfig(table, input, new Configuration());
+
+    assertThatThrownBy(config::location)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("The location must be within the table location");
   }
 }

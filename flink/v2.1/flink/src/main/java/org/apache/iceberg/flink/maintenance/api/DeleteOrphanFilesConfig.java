@@ -29,6 +29,7 @@ import org.apache.iceberg.flink.FlinkConfParser;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.util.LocationUtil;
 import org.apache.iceberg.util.ThreadPools;
 
 public class DeleteOrphanFilesConfig {
@@ -113,10 +114,12 @@ public class DeleteOrphanFilesConfig {
                   + "Valid values: ERROR, IGNORE, DELETE.");
 
   private final FlinkConfParser confParser;
+  private final String tableLocation;
 
   public DeleteOrphanFilesConfig(
       Table table, Map<String, String> writeOptions, ReadableConfig readableConfig) {
     this.confParser = new FlinkConfParser(table, writeOptions, readableConfig);
+    this.tableLocation = LocationUtil.stripTrailingSlash(table.location());
   }
 
   public long scheduleOnIntervalSecond() {
@@ -147,7 +150,20 @@ public class DeleteOrphanFilesConfig {
   }
 
   public String location() {
-    return confParser.stringConf().option(LOCATION).flinkConfig(LOCATION_OPTION).parseOptional();
+    String newLocation =
+        confParser.stringConf().option(LOCATION).flinkConfig(LOCATION_OPTION).parseOptional();
+    if (newLocation == null) {
+      return null;
+    }
+
+    String normalizedLocation = LocationUtil.stripTrailingSlash(newLocation);
+    Preconditions.checkArgument(
+        normalizedLocation.equals(tableLocation) || normalizedLocation.startsWith(tableLocation + "/"),
+        "Invalid %s: %s. The location must be within the table location: %s",
+        LOCATION,
+        newLocation,
+        tableLocation);
+    return newLocation;
   }
 
   public boolean usePrefixListing() {
