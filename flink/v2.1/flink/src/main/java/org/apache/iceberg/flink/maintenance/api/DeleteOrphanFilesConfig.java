@@ -158,7 +158,8 @@ public class DeleteOrphanFilesConfig {
 
     String normalizedLocation = LocationUtil.stripTrailingSlash(newLocation);
     Preconditions.checkArgument(
-        normalizedLocation.equals(tableLocation) || normalizedLocation.startsWith(tableLocation + "/"),
+        normalizedLocation.equals(tableLocation)
+            || normalizedLocation.startsWith(tableLocation + "/"),
         "Invalid %s: %s. The location must be within the table location: %s",
         LOCATION,
         newLocation,
