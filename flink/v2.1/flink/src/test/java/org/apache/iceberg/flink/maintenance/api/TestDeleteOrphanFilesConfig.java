@@ -92,12 +92,42 @@ public class TestDeleteOrphanFilesConfig extends OperatorTestBase {
 
   @Test
   void testLocationValidation() {
-    input.put(DeleteOrphanFilesConfig.LOCATION, table.location() + "-outside");
+    String[] invalidLocations =
+        new String[] {
+          table.location() + "-outside",
+          table.location() + "/../outside",
+          table.location() + "/sub/../../outside"
+        };
+
+    for (String invalidLocation : invalidLocations) {
+      input.put(DeleteOrphanFilesConfig.LOCATION, invalidLocation);
+
+      DeleteOrphanFilesConfig config =
+          new DeleteOrphanFilesConfig(table, input, new Configuration());
+
+      assertThatThrownBy(config::location)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("The location must be within the table location");
+    }
+  }
+
+  @Test
+  void testEmptyLocationIsRejected() {
+    input.put(DeleteOrphanFilesConfig.LOCATION, "");
 
     DeleteOrphanFilesConfig config = new DeleteOrphanFilesConfig(table, input, new Configuration());
 
     assertThatThrownBy(config::location)
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("The location must be within the table location");
+        .hasMessageContaining("must not be empty");
+  }
+
+  @Test
+  void testLocationNormalization() {
+    input.put(DeleteOrphanFilesConfig.LOCATION, table.location() + "/subdir/../inside");
+
+    DeleteOrphanFilesConfig config = new DeleteOrphanFilesConfig(table, input, new Configuration());
+
+    assertThat(config.location()).isEqualTo(table.location() + "/inside");
   }
 }

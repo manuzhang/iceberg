@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.flink.maintenance.api;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.apache.flink.configuration.ConfigOption;
@@ -119,7 +120,7 @@ public class DeleteOrphanFilesConfig {
   public DeleteOrphanFilesConfig(
       Table table, Map<String, String> writeOptions, ReadableConfig readableConfig) {
     this.confParser = new FlinkConfParser(table, writeOptions, readableConfig);
-    this.tableLocation = LocationUtil.stripTrailingSlash(table.location());
+    this.tableLocation = normalizeLocation(table.location());
   }
 
   public long scheduleOnIntervalSecond() {
@@ -156,7 +157,9 @@ public class DeleteOrphanFilesConfig {
       return null;
     }
 
-    String normalizedLocation = LocationUtil.stripTrailingSlash(newLocation);
+    Preconditions.checkArgument(!newLocation.isEmpty(), "Invalid %s: must not be empty", LOCATION);
+
+    String normalizedLocation = normalizeLocation(newLocation);
     Preconditions.checkArgument(
         normalizedLocation.equals(tableLocation)
             || normalizedLocation.startsWith(tableLocation + "/"),
@@ -164,7 +167,7 @@ public class DeleteOrphanFilesConfig {
         LOCATION,
         newLocation,
         tableLocation);
-    return newLocation;
+    return normalizedLocation;
   }
 
   public boolean usePrefixListing() {
@@ -229,5 +232,15 @@ public class DeleteOrphanFilesConfig {
     }
 
     return result;
+  }
+
+  private static String normalizeLocation(String location) {
+    String stripped = LocationUtil.stripTrailingSlash(location);
+    try {
+      URI normalized = URI.create(stripped).normalize();
+      return LocationUtil.stripTrailingSlash(normalized.toString());
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(String.format("Invalid %s: %s", LOCATION, location), e);
+    }
   }
 }
