@@ -1607,10 +1607,11 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
 
   @ParameterizedTest
   @ValueSource(strings = {"v1/oauth/tokens", "https://auth-server.com/token"})
-  public void testCatalogTokenRefreshExchangeDisabled(String oauth2ServerUri) {
+  public void testCatalogTokenRefreshIgnoresClientExchangeDisabled(String oauth2ServerUri) {
     Map<String, String> emptyHeaders = ImmutableMap.of();
     Map<String, String> catalogHeaders =
         ImmutableMap.of("Authorization", "Bearer client-credentials-token:sub=catalog");
+    Map<String, String> refreshHeaders = OAuth2Util.basicAuthHeaders("catalog:secret");
 
     Map<String, String> refreshRequest =
         ImmutableMap.of(
@@ -1681,7 +1682,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
                       matches(
                           HTTPMethod.POST,
                           oauth2ServerUri,
-                          catalogHeaders,
+                          refreshHeaders,
                           Map.of(),
                           refreshRequest),
                       eq(OAuthTokenResponse.class),

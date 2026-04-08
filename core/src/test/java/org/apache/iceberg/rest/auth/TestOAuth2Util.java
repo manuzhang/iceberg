@@ -27,12 +27,16 @@ import static org.mockito.ArgumentMatchers.argThat;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Objects;
 import org.apache.iceberg.rest.RESTClient;
 import org.apache.iceberg.rest.responses.OAuthTokenResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 public class TestOAuth2Util {
+  private static final String TOKEN_EXCHANGE_GRANT =
+      "urn:ietf:params:oauth:grant-type:token-exchange";
+
   @Test
   public void testOAuthScopeTokenValidation() {
     // valid scope tokens are from ascii 0x21 to 0x7E, excluding 0x22 (") and 0x5C (\)
@@ -128,9 +132,7 @@ public class TestOAuth2Util {
               argThat(
                   formData ->
                       formData.containsKey(GRANT_TYPE)
-                          && formData
-                              .get(GRANT_TYPE)
-                              .equals("urn:ietf:params:oauth:grant-type:token-exchange")),
+                          && Objects.equals(TOKEN_EXCHANGE_GRANT, formData.get(GRANT_TYPE))),
               Mockito.eq(OAuthTokenResponse.class),
               anyMap(),
               any());
