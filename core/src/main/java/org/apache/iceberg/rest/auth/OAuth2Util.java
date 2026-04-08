@@ -533,8 +533,7 @@ public class OAuth2Util {
         return refreshExpiredToken(client);
       } else {
         // attempt a normal refresh
-        return refreshToken(
-            client, config, headers(), token(), tokenType(), optionalOAuthParams());
+        return refreshToken(client, config, headers(), token(), tokenType(), optionalOAuthParams());
       }
     }
 
@@ -543,8 +542,7 @@ public class OAuth2Util {
         return null;
       }
 
-      Map<String, String> basicHeaders =
-          RESTUtil.merge(headers(), basicAuthHeaders(credential()));
+      Map<String, String> basicHeaders = RESTUtil.merge(headers(), basicAuthHeaders(credential()));
       return refreshToken(
           client, config, basicHeaders, token(), tokenType(), optionalOAuthParams());
     }
