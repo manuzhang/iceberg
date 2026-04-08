@@ -89,11 +89,6 @@ public interface AuthConfig {
                 properties,
                 OAuth2Properties.TOKEN_REFRESH_ENABLED,
                 OAuth2Properties.TOKEN_REFRESH_ENABLED_DEFAULT))
-        .exchangeEnabled(
-            PropertyUtil.propertyAsBoolean(
-                properties,
-                OAuth2Properties.TOKEN_EXCHANGE_ENABLED,
-                OAuth2Properties.TOKEN_EXCHANGE_ENABLED_DEFAULT))
         .expiresAtMillis(expiresAtMillis(properties))
         .build();
   }

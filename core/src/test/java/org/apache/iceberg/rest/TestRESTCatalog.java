@@ -1614,9 +1614,9 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
 
     Map<String, String> refreshRequest =
         ImmutableMap.of(
-            "grant_type", "client_credentials",
-            "client_id", "catalog",
-            "client_secret", "secret",
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", "client-credentials-token:sub=catalog",
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
             "scope", "catalog");
 
     RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
@@ -1679,7 +1679,11 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
               Mockito.verify(adapter)
                   .execute(
                       matches(
-                          HTTPMethod.POST, oauth2ServerUri, emptyHeaders, Map.of(), refreshRequest),
+                          HTTPMethod.POST,
+                          oauth2ServerUri,
+                          catalogHeaders,
+                          Map.of(),
+                          refreshRequest),
                       eq(OAuthTokenResponse.class),
                       any(),
                       any());
@@ -1743,6 +1747,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
             "client_id", "catalog",
             "client_secret", "12345",
             "scope", "catalog");
+
     Mockito.verify(adapter)
         .execute(
             matches(
@@ -1859,10 +1864,17 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
             any(),
             any());
 
+    Map<String, String> basicHeaders = OAuth2Util.basicAuthHeaders(credential);
+    Map<String, String> refreshRequest =
+        ImmutableMap.of(
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", token,
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
+            "scope", "catalog");
+
     Mockito.verify(adapter)
         .execute(
-            matches(
-                HTTPMethod.POST, oauth2ServerUri, emptyHeaders, Map.of(), clientCredentialsRequest),
+            matches(HTTPMethod.POST, oauth2ServerUri, basicHeaders, Map.of(), refreshRequest),
             eq(OAuthTokenResponse.class),
             any(),
             any());

@@ -161,37 +161,23 @@ public class OAuth2Util {
       String subjectToken,
       String subjectTokenType,
       Map<String, String> optionalOAuthParams) {
-    if (config.exchangeEnabled()) {
-      Map<String, String> request =
-          tokenExchangeRequest(
-              subjectToken,
-              subjectTokenType,
-              config.scope() != null ? ImmutableList.of(config.scope()) : ImmutableList.of(),
-              optionalOAuthParams);
+    Map<String, String> request =
+        tokenExchangeRequest(
+            subjectToken,
+            subjectTokenType,
+            config.scope() != null ? ImmutableList.of(config.scope()) : ImmutableList.of(),
+            optionalOAuthParams);
 
-      OAuthTokenResponse response =
-          client.postForm(
-              config.oauth2ServerUri(),
-              request,
-              OAuthTokenResponse.class,
-              headers,
-              ErrorHandlers.oauthErrorHandler());
-      response.validate();
+    OAuthTokenResponse response =
+        client.postForm(
+            config.oauth2ServerUri(),
+            request,
+            OAuthTokenResponse.class,
+            headers,
+            ErrorHandlers.oauthErrorHandler());
+    response.validate();
 
-      return response;
-    } else {
-      if (null == config.credential()) {
-        return null;
-      }
-
-      return fetchToken(
-          client,
-          Map.of(),
-          config.credential(),
-          config.scope(),
-          config.oauth2ServerUri(),
-          ImmutableMap.of());
-    }
+    return response;
   }
 
   public static OAuthTokenResponse exchangeToken(
@@ -547,7 +533,8 @@ public class OAuth2Util {
         return refreshExpiredToken(client);
       } else {
         // attempt a normal refresh
-        return refreshToken(client, config, headers(), token(), tokenType(), optionalOAuthParams());
+        return refreshToken(
+            client, config, headers(), token(), tokenType(), optionalOAuthParams());
       }
     }
 
@@ -556,15 +543,10 @@ public class OAuth2Util {
         return null;
       }
 
-      if (config.exchangeEnabled()) {
-        Map<String, String> basicHeaders =
-            RESTUtil.merge(headers(), basicAuthHeaders(credential()));
-        return refreshToken(
-            client, config, basicHeaders, token(), tokenType(), optionalOAuthParams());
-      } else {
-        return fetchToken(
-            client, Map.of(), credential(), scope(), oauth2ServerUri(), ImmutableMap.of());
-      }
+      Map<String, String> basicHeaders =
+          RESTUtil.merge(headers(), basicAuthHeaders(credential()));
+      return refreshToken(
+          client, config, basicHeaders, token(), tokenType(), optionalOAuthParams());
     }
 
     /**

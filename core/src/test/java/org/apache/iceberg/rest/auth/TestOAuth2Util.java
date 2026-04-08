@@ -19,7 +19,6 @@
 package org.apache.iceberg.rest.auth;
 
 import static org.apache.hadoop.hdfs.web.oauth2.OAuth2Constants.BEARER;
-import static org.apache.hadoop.hdfs.web.oauth2.OAuth2Constants.CLIENT_CREDENTIALS;
 import static org.apache.hadoop.hdfs.web.oauth2.OAuth2Constants.GRANT_TYPE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -103,7 +102,7 @@ public class TestOAuth2Util {
   }
 
   @Test
-  public void testCredentialFlowForSessionRefresh() throws IOException {
+  public void testTokenExchangeFlowForSessionRefresh() throws IOException {
     AuthConfig authConfig =
         ImmutableAuthConfig.builder()
             .keepRefreshed(true)
@@ -129,7 +128,9 @@ public class TestOAuth2Util {
               argThat(
                   formData ->
                       formData.containsKey(GRANT_TYPE)
-                          && formData.get(GRANT_TYPE).equals(CLIENT_CREDENTIALS)),
+                          && formData
+                              .get(GRANT_TYPE)
+                              .equals("urn:ietf:params:oauth:grant-type:token-exchange")),
               Mockito.eq(OAuthTokenResponse.class),
               anyMap(),
               any());
