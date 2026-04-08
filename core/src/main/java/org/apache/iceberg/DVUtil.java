@@ -29,10 +29,10 @@ import java.util.concurrent.ExecutorService;
 import org.apache.iceberg.deletes.BaseDVFileWriter;
 import org.apache.iceberg.deletes.DVFileWriter;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
-import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.encryption.EncryptingFileIO;
 import org.apache.iceberg.io.IOUtil;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -47,7 +47,7 @@ import org.apache.iceberg.util.Tasks;
 class DVUtil {
   private DVUtil() {}
 
-  static PositionDeleteIndex readDV(DeleteFile deleteFile, FileIO fileIO) {
+  static PositionDeleteIndex readDV(DeleteFile deleteFile, EncryptingFileIO fileIO) {
     Preconditions.checkArgument(
         ContentFileUtil.isDV(deleteFile),
         "Cannot read, not a deletion vector: %s",
@@ -78,7 +78,7 @@ class DVUtil {
   static List<DeleteFile> mergeAndWriteDVsIfRequired(
       Map<String, List<DeleteFile>> dvsByReferencedFile,
       String mergedOutputLocation,
-      FileIO fileIO,
+      EncryptingFileIO fileIO,
       Map<Integer, PartitionSpec> specs,
       ExecutorService pool) {
     List<DeleteFile> finalDVs = Lists.newArrayList();
@@ -105,7 +105,8 @@ class DVUtil {
     Map<String, PositionDeleteIndex> deletes =
         readAndMergeDVs(duplicates.values().toArray(DeleteFile[]::new), fileIO, pool);
 
-    finalDVs.addAll(writeDVs(deletes, fileIO, mergedOutputLocation, partitions));
+    finalDVs.addAll(
+        writeDVs(deletes, fileIO.newEncryptingOutputFile(mergedOutputLocation), partitions));
     return finalDVs;
   }
 
@@ -159,7 +160,7 @@ class DVUtil {
    * @return map of referenced data file location to the merged position delete index
    */
   private static Map<String, PositionDeleteIndex> readAndMergeDVs(
-      DeleteFile[] duplicateDVs, FileIO io, ExecutorService pool) {
+      DeleteFile[] duplicateDVs, EncryptingFileIO io, ExecutorService pool) {
     // Read all duplicate DVs in parallel
     PositionDeleteIndex[] duplicatedDVPositions = new PositionDeleteIndex[duplicateDVs.length];
     Tasks.range(duplicatedDVPositions.length)
@@ -185,11 +186,9 @@ class DVUtil {
   // Produces a single Puffin file containing the merged DVs
   private static List<DeleteFile> writeDVs(
       Map<String, PositionDeleteIndex> mergedIndexByFile,
-      FileIO fileIO,
-      String dvOutputLocation,
+      EncryptedOutputFile encryptedOutputFile,
       Map<String, Pair<PartitionSpec, StructLike>> partitions) {
-    OutputFile dvOutputFile = fileIO.newOutputFile(dvOutputLocation);
-    try (DVFileWriter dvFileWriter = new BaseDVFileWriter(() -> dvOutputFile, path -> null)) {
+    try (DVFileWriter dvFileWriter = new BaseDVFileWriter(encryptedOutputFile, path -> null)) {
       for (Map.Entry<String, PositionDeleteIndex> entry : mergedIndexByFile.entrySet()) {
         String referencedLocation = entry.getKey();
         PositionDeleteIndex mergedPositions = entry.getValue();

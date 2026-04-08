@@ -19,6 +19,7 @@
 package org.apache.iceberg.deletes;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -30,6 +31,9 @@ import org.apache.iceberg.IcebergBuild;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.StructLike;
+import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.encryption.EncryptionKeyMetadata;
+import org.apache.iceberg.encryption.NativeEncryptionKeyMetadata;
 import org.apache.iceberg.io.DeleteWriteResult;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.io.OutputFileFactory;
@@ -43,6 +47,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.util.ByteBuffers;
 import org.apache.iceberg.util.CharSequenceSet;
 import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.iceberg.util.StructLikeUtil;
@@ -56,18 +61,30 @@ public class BaseDVFileWriter implements DVFileWriter {
   private final Function<String, PositionDeleteIndex> loadPreviousDeletes;
   private final Map<String, Deletes> deletesByPath = Maps.newHashMap();
   private final Map<String, BlobMetadata> blobsByPath = Maps.newHashMap();
+  private final EncryptionKeyMetadata keyMetadata;
   private DeleteWriteResult result = null;
 
   public BaseDVFileWriter(
       OutputFileFactory fileFactory, Function<String, PositionDeleteIndex> loadPreviousDeletes) {
-    this(() -> fileFactory.newOutputFile().encryptingOutputFile(), loadPreviousDeletes);
+    this(fileFactory.newOutputFile(), loadPreviousDeletes);
   }
 
   public BaseDVFileWriter(
-      Supplier<OutputFile> dvOutputFile,
+      EncryptedOutputFile encryptedOutputFile,
       Function<String, PositionDeleteIndex> loadPreviousDeletes) {
+    this(
+        encryptedOutputFile::encryptingOutputFile,
+        loadPreviousDeletes,
+        encryptedOutputFile.keyMetadata());
+  }
+
+  private BaseDVFileWriter(
+      Supplier<OutputFile> dvOutputFile,
+      Function<String, PositionDeleteIndex> loadPreviousDeletes,
+      EncryptionKeyMetadata keyMetadata) {
     this.dvOutputFile = dvOutputFile;
     this.loadPreviousDeletes = loadPreviousDeletes;
+    this.keyMetadata = keyMetadata;
   }
 
   @Override
@@ -151,6 +168,7 @@ public class BaseDVFileWriter implements DVFileWriter {
         .withPath(path)
         .withPartition(deletes.partition())
         .withFileSizeInBytes(size)
+        .withEncryptionKeyMetadata(keyMetadata(size))
         .withReferencedDataFile(referencedDataFile)
         .withContentOffset(blobMetadata.offset())
         .withContentSizeInBytes(blobMetadata.length())
@@ -168,6 +186,18 @@ public class BaseDVFileWriter implements DVFileWriter {
   private PuffinWriter newWriter() {
     OutputFile outputFile = dvOutputFile.get();
     return Puffin.write(outputFile).createdBy(IcebergBuild.fullVersion()).build();
+  }
+
+  private ByteBuffer keyMetadata(long fileSizeInBytes) {
+    if (keyMetadata != null) {
+      if (keyMetadata instanceof NativeEncryptionKeyMetadata) {
+        return ((NativeEncryptionKeyMetadata) keyMetadata).copyWithLength(fileSizeInBytes).buffer();
+      } else {
+        return ByteBuffers.copy(keyMetadata.buffer());
+      }
+    } else {
+      return null;
+    }
   }
 
   private Blob toBlob(PositionDeleteIndex positions, String path) {
