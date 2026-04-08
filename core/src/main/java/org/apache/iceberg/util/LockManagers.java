@@ -79,6 +79,7 @@ public class LockManagers {
   public abstract static class BaseLockManager implements LockManager {
 
     private static volatile ScheduledExecutorService scheduler;
+    private static volatile ScheduledThreadPoolExecutor schedulerPool;
 
     private long acquireTimeoutMs;
     private long acquireIntervalMs;
@@ -110,15 +111,27 @@ public class LockManagers {
       if (scheduler == null || scheduler.isShutdown()) {
         synchronized (BaseLockManager.class) {
           if (scheduler == null || scheduler.isShutdown()) {
-            scheduler =
-                MoreExecutors.getExitingScheduledExecutorService(
-                    (ScheduledThreadPoolExecutor)
-                        Executors.newScheduledThreadPool(
-                            heartbeatThreads(),
-                            new ThreadFactoryBuilder()
-                                .setDaemon(true)
-                                .setNameFormat("iceberg-lock-manager-%d")
-                                .build()));
+            ScheduledThreadPoolExecutor pool =
+                (ScheduledThreadPoolExecutor)
+                    Executors.newScheduledThreadPool(
+                        heartbeatThreads(),
+                        new ThreadFactoryBuilder()
+                            .setDaemon(true)
+                            .setNameFormat("iceberg-lock-manager-%d")
+                            .build());
+            scheduler = MoreExecutors.getExitingScheduledExecutorService(pool);
+            schedulerPool = pool;
+          }
+        }
+      }
+
+      // Expand the shared pool if this instance needs more threads than currently allocated.
+      // The pool can only grow to avoid disrupting other active instances.
+      ScheduledThreadPoolExecutor pool = schedulerPool;
+      if (pool != null && pool.getCorePoolSize() < heartbeatThreads()) {
+        synchronized (BaseLockManager.class) {
+          if (schedulerPool != null && schedulerPool.getCorePoolSize() < heartbeatThreads()) {
+            schedulerPool.setCorePoolSize(heartbeatThreads());
           }
         }
       }

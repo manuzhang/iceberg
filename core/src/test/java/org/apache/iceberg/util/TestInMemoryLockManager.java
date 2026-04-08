@@ -221,13 +221,48 @@ public class TestInMemoryLockManager {
   public void testAcquireSucceedsWhenSharedSchedulerIsNull() throws Exception {
     Field schedulerField = LockManagers.BaseLockManager.class.getDeclaredField("scheduler");
     schedulerField.setAccessible(true);
+    Field schedulerPoolField = LockManagers.BaseLockManager.class.getDeclaredField("schedulerPool");
+    schedulerPoolField.setAccessible(true);
 
-    // Null out the static scheduler to simulate a cold-start (scheduler == null branch)
+    // Null out the static scheduler and pool to simulate a cold-start (scheduler == null branch)
     schedulerField.set(null, null);
+    schedulerPoolField.set(null, null);
     assertThat(schedulerField.get(null)).isNull();
 
     assertThat(lockManager.acquire(lockEntityId, ownerId))
         .as("acquire must succeed when the shared scheduler is null (cold start)")
         .isTrue();
+  }
+
+  /**
+   * Verifies that when a later catalog instance requires more heartbeat threads than the current
+   * shared pool was sized with, the pool is expanded dynamically rather than leaving the instance
+   * under-provisioned.
+   */
+  @Test
+  public void testSchedulerPoolExpandsForHigherHeartbeatThreadCount() throws Exception {
+    Field schedulerPoolField = LockManagers.BaseLockManager.class.getDeclaredField("schedulerPool");
+    schedulerPoolField.setAccessible(true);
+
+    // Warm up the shared pool with the default thread count (4).
+    lockManager.scheduler();
+    java.util.concurrent.ScheduledThreadPoolExecutor pool =
+        (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerPoolField.get(null);
+    int initialSize = pool.getCorePoolSize();
+
+    // Create a second instance that requests more threads than the current pool has.
+    int largerThreadCount = initialSize + 4;
+    LockManagers.InMemoryLockManager highThreadManager =
+        new LockManagers.InMemoryLockManager(
+            ImmutableMap.of(
+                CatalogProperties.LOCK_HEARTBEAT_THREADS, String.valueOf(largerThreadCount)));
+
+    highThreadManager.scheduler();
+
+    assertThat(pool.getCorePoolSize())
+        .as("pool must grow to accommodate the larger heartbeat-threads requirement")
+        .isGreaterThanOrEqualTo(largerThreadCount);
+
+    highThreadManager.close();
   }
 }
