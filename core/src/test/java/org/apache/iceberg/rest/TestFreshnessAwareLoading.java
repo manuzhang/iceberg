@@ -39,6 +39,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.apache.iceberg.catalog.SessionCatalog.SessionContext;
 import org.apache.http.HttpHeaders;
 import org.apache.iceberg.BaseMetadataTable;
 import org.apache.iceberg.BaseTable;
@@ -66,7 +67,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 
-public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
+  public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
   private static final ResourcePaths RESOURCE_PATHS =
       ResourcePaths.forCatalogProperties(
           ImmutableMap.of(
@@ -569,6 +570,50 @@ public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
         .containsOnlyKeys(
             SessionIdTableId.of(DEFAULT_SESSION_CONTEXT.sessionId(), TABLE),
             SessionIdTableId.of(otherSessionContext.sessionId(), TABLE));
+  }
+
+  @Test
+  public void notModifiedResponseShouldUseCurrentContextForCollidingSessionIds() {
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+    Map<String, FileIO> fileIOByToken = Maps.newHashMap();
+
+    RESTSessionCatalog sessionCatalog =
+        new RESTSessionCatalog(
+            config -> adapter,
+            (context, properties) ->
+                fileIOByToken.computeIfAbsent(
+                    tokenForContext(context),
+                    token -> Mockito.mock(FileIO.class, "io-for-" + token)));
+    sessionCatalog.initialize("test_session_catalog", Map.of());
+
+    SessionContext contextWithOriginalCredentials =
+        new SessionContext("colliding_session_id", "user-a", Map.of("token", "token-a"), Map.of());
+    SessionContext contextWithDifferentCredentials =
+        new SessionContext("colliding_session_id", "user-b", Map.of("token", "token-b"), Map.of());
+
+    sessionCatalog.createNamespace(contextWithOriginalCredentials, TABLE.namespace());
+    sessionCatalog.buildTable(contextWithOriginalCredentials, TABLE, SCHEMA).create();
+
+    expectFullTableLoadForLoadTable(TABLE, adapter);
+    BaseTable tableWithOriginalCredentials =
+        (BaseTable) sessionCatalog.loadTable(contextWithOriginalCredentials, TABLE);
+
+    expectNotModifiedResponseForLoadTable(TABLE, adapter);
+    BaseTable tableWithCollidingSessionId =
+        (BaseTable) sessionCatalog.loadTable(contextWithDifferentCredentials, TABLE);
+
+    assertThat(fileIOByToken).containsKeys("token-a", "token-b");
+    assertThat(tableWithOriginalCredentials.io()).isSameAs(fileIOByToken.get("token-a"));
+    assertThat(tableWithCollidingSessionId.io()).isSameAs(fileIOByToken.get("token-b"));
+  }
+
+  private String tokenForContext(SessionContext context) {
+    Map<String, String> credentials = context.credentials();
+    if (credentials == null) {
+      return "no-credentials";
+    }
+
+    return credentials.getOrDefault("token", "missing-token");
   }
 
   @Test
