@@ -493,9 +493,9 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
               loadInternal(
                   context,
                   baseIdent,
-              snapshotMode,
-              headersForLoadTable(cachedTable),
-              responseHeaders::putAll);
+                  snapshotMode,
+                  headersForLoadTable(cachedTable),
+                  responseHeaders::putAll);
 
           if (response == null) {
             Preconditions.checkNotNull(cachedTable, "Invalid load table response: null");

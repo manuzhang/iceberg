@@ -39,7 +39,6 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import org.apache.iceberg.catalog.SessionCatalog.SessionContext;
 import org.apache.http.HttpHeaders;
 import org.apache.iceberg.BaseMetadataTable;
 import org.apache.iceberg.BaseTable;
@@ -48,6 +47,7 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.SessionCatalog;
+import org.apache.iceberg.catalog.SessionCatalog.SessionContext;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.RESTException;
@@ -67,7 +67,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 
-  public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
+public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
   private static final ResourcePaths RESOURCE_PATHS =
       ResourcePaths.forCatalogProperties(
           ImmutableMap.of(
