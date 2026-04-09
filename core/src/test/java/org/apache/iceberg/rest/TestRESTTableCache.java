@@ -28,11 +28,14 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TestTables;
 import org.apache.iceberg.catalog.SessionCatalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.FakeTicker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -272,6 +275,11 @@ public class TestRESTTableCache {
   }
 
   private TableMetadata tableMetadata(String tableName) {
-    return new TestTables.TestTableOperations(tableName, temp.toFile()).current();
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.IntegerType.get()),
+            Types.NestedField.optional(2, "data", Types.StringType.get()));
+    return TableMetadata.newTableMetadata(
+        schema, PartitionSpec.unpartitioned(), "file:/tmp/" + tableName, Map.of());
   }
 }
