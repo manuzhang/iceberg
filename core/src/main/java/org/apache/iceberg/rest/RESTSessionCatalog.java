@@ -542,9 +542,6 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     }
 
     List<Credential> credentials = response.credentials();
-    if (credentials == null) {
-      credentials = ImmutableList.of();
-    }
     RESTClient tableClient = client.withAuthSession(tableSession);
     Supplier<BaseTable> tableSupplier =
         createTableSupplier(

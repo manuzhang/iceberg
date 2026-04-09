@@ -28,12 +28,16 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TestTables;
 import org.apache.iceberg.catalog.SessionCatalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.util.FakeTicker;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,6 +51,9 @@ public class TestRESTTableCache {
       () ->
           new BaseTable(new TestTables.TestTableOperations(TABLE_NAME, temp.toFile()), TABLE_NAME);
   private static final String ETAG = "d7sa6das";
+  private static final Schema TABLE_SCHEMA =
+      new Schema(Types.NestedField.required(1, "id", Types.IntegerType.get()));
+  private static final PartitionSpec TABLE_SPEC = PartitionSpec.unpartitioned();
   private static final Duration HALF_OF_TABLE_EXPIRATION =
       Duration.ofMillis(RESTCatalogProperties.TABLE_CACHE_EXPIRE_AFTER_WRITE_MS_DEFAULT)
           .dividedBy(2);
@@ -272,6 +279,9 @@ public class TestRESTTableCache {
   }
 
   private TableMetadata tableMetadata(String tableName) {
-    return new TestTables.TestTableOperations(tableName, temp.toFile()).current();
+    String location = temp.resolve(tableName).toFile().toString();
+
+    return TableMetadata.newTableMetadata(
+        TABLE_SCHEMA, TABLE_SPEC, SortOrder.unsorted(), location, Map.of());
   }
 }
