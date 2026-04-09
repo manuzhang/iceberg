@@ -23,12 +23,17 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Ticker;
 import java.io.Closeable;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.rest.credentials.Credential;
 import org.apache.iceberg.util.PropertyUtil;
 import org.immutables.value.Value;
 import org.slf4j.Logger;
@@ -81,9 +86,13 @@ class RESTTableCache implements Closeable {
       String sessionId,
       TableIdentifier identifier,
       Supplier<BaseTable> tableSupplier,
-      String eTag) {
+      String eTag,
+      TableMetadata tableMetadata,
+      Map<String, String> tableConfig,
+      List<Credential> credentials) {
     tableCache.put(
-        SessionIdTableId.of(sessionId, identifier), TableWithETag.of(tableSupplier, eTag));
+        SessionIdTableId.of(sessionId, identifier),
+        TableWithETag.of(tableSupplier, eTag, tableMetadata, tableConfig, credentials));
   }
 
   public void invalidate(String sessionId, TableIdentifier identifier) {
@@ -122,8 +131,25 @@ class RESTTableCache implements Closeable {
 
     String eTag();
 
-    static TableWithETag of(Supplier<BaseTable> tableSupplier, String eTag) {
-      return ImmutableTableWithETag.builder().supplier(tableSupplier).eTag(eTag).build();
+    TableMetadata tableMetadata();
+
+    Map<String, String> tableConfig();
+
+    List<Credential> credentials();
+
+    static TableWithETag of(
+        Supplier<BaseTable> tableSupplier,
+        String eTag,
+        TableMetadata tableMetadata,
+        Map<String, String> tableConfig,
+        List<Credential> credentials) {
+      return ImmutableTableWithETag.builder()
+          .supplier(tableSupplier)
+          .eTag(eTag)
+          .tableMetadata(tableMetadata)
+          .putAllTableConfig(tableConfig)
+          .addAllCredentials(credentials)
+          .build();
     }
   }
 }

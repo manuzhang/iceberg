@@ -474,7 +474,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
       if (response == null) {
         Preconditions.checkNotNull(cachedTable, "Invalid load table response: null");
 
-        return cachedTable.supplier().get();
+        return tableWithCurrentContext(context, identifier, cachedTable);
       }
 
       loadedIdent = identifier;
@@ -493,15 +493,16 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
               loadInternal(
                   context,
                   baseIdent,
-                  snapshotMode,
-                  headersForLoadTable(cachedTable),
-                  responseHeaders::putAll);
+              snapshotMode,
+              headersForLoadTable(cachedTable),
+              responseHeaders::putAll);
 
           if (response == null) {
             Preconditions.checkNotNull(cachedTable, "Invalid load table response: null");
 
-            return MetadataTableUtils.createMetadataTableInstance(
-                cachedTable.supplier().get(), metadataType);
+            BaseTable table = tableWithCurrentContext(context, baseIdent, cachedTable);
+
+            return MetadataTableUtils.createMetadataTableInstance(table, metadataType);
           }
 
           loadedIdent = baseIdent;
@@ -541,6 +542,9 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     }
 
     List<Credential> credentials = response.credentials();
+    if (credentials == null) {
+      credentials = ImmutableList.of();
+    }
     RESTClient tableClient = client.withAuthSession(tableSession);
     Supplier<BaseTable> tableSupplier =
         createTableSupplier(
@@ -548,12 +552,38 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
 
     String eTag = responseHeaders.getOrDefault(HttpHeaders.ETAG, null);
     if (eTag != null) {
-      tableCache.put(context.sessionId(), finalIdentifier, tableSupplier, eTag);
+      tableCache.put(
+          context.sessionId(),
+          finalIdentifier,
+          tableSupplier,
+          eTag,
+          tableMetadata,
+          tableConf,
+          credentials);
     }
 
     if (metadataType != null) {
       return MetadataTableUtils.createMetadataTableInstance(tableSupplier.get(), metadataType);
     }
+
+    return tableSupplier.get();
+  }
+
+  private BaseTable tableWithCurrentContext(
+      SessionContext context, TableIdentifier identifier, TableWithETag cachedTable) {
+    AuthSession contextualSession = authManager.contextualSession(context, catalogAuth);
+    AuthSession tableSession =
+        authManager.tableSession(identifier, cachedTable.tableConfig(), contextualSession);
+    RESTClient tableClient = client.withAuthSession(tableSession);
+
+    Supplier<BaseTable> tableSupplier =
+        createTableSupplier(
+            identifier,
+            cachedTable.tableMetadata(),
+            context,
+            tableClient,
+            cachedTable.tableConfig(),
+            cachedTable.credentials());
 
     return tableSupplier.get();
   }

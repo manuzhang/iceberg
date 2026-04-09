@@ -28,9 +28,11 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TestTables;
 import org.apache.iceberg.catalog.SessionCatalog;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.util.FakeTicker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -74,7 +76,14 @@ public class TestRESTTableCache {
   @Test
   public void basicPutAndGet() {
     RESTTableCache cache = new RESTTableCache(Map.of());
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
 
     assertThat(cache.cache().asMap()).hasSize(1);
     assertThat(cache.cache().asMap())
@@ -89,7 +98,14 @@ public class TestRESTTableCache {
   @Test
   public void notFoundInCache() {
     RESTTableCache cache = new RESTTableCache(Map.of());
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
 
     assertThat(cache.getIfPresent("some_id", TABLE_IDENTIFIER)).isNull();
     assertThat(cache.getIfPresent(SESSION_ID, TableIdentifier.of("ns", "other_table"))).isNull();
@@ -99,8 +115,22 @@ public class TestRESTTableCache {
   public void tableInMultipleSessions() {
     RESTTableCache cache = new RESTTableCache(Map.of());
     String otherSessionId = "sessionID2";
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
-    cache.put(otherSessionId, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
+    cache.put(
+        otherSessionId,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
 
     assertThat(cache.cache().asMap()).hasSize(2);
 
@@ -119,7 +149,15 @@ public class TestRESTTableCache {
     RESTTableCache cache = new RESTTableCache(Map.of());
     // Add more items than the max limit
     for (int i = 0; i < RESTCatalogProperties.TABLE_CACHE_MAX_ENTRIES_DEFAULT + 10; ++i) {
-      cache.put(SESSION_ID, TableIdentifier.of("ns", "tbl" + i), TABLE_SUPPLIER, ETAG);
+      TableIdentifier identifier = TableIdentifier.of("ns", "tbl" + i);
+      cache.put(
+          SESSION_ID,
+          identifier,
+          TABLE_SUPPLIER,
+          ETAG,
+          tableMetadata(identifier.name()),
+          Map.of(),
+          ImmutableList.of());
     }
     cache.cache().cleanUp();
 
@@ -132,8 +170,22 @@ public class TestRESTTableCache {
     RESTTableCache cache =
         new RESTTableCache(Map.of(RESTCatalogProperties.TABLE_CACHE_MAX_ENTRIES, "1"));
     TableIdentifier otherTableIdentifier = TableIdentifier.of("ns", "other_table");
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
-    cache.put(SESSION_ID, otherTableIdentifier, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
+    cache.put(
+        SESSION_ID,
+        otherTableIdentifier,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(otherTableIdentifier.name()),
+        Map.of(),
+        ImmutableList.of());
     cache.cache().cleanUp();
 
     assertThat(cache.cache().asMap()).hasSize(1);
@@ -145,7 +197,14 @@ public class TestRESTTableCache {
   public void cacheTurnedOff() {
     RESTTableCache cache =
         new RESTTableCache(Map.of(RESTCatalogProperties.TABLE_CACHE_MAX_ENTRIES, "0"));
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
     cache.cache().cleanUp();
 
     assertThat(cache.cache().asMap()).isEmpty();
@@ -155,7 +214,14 @@ public class TestRESTTableCache {
   public void entryExpires() {
     FakeTicker ticker = new FakeTicker();
     RESTTableCache cache = new RESTTableCache(Map.of(), ticker);
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
 
     SessionIdTableId cacheKey = SessionIdTableId.of(SESSION_ID, TABLE_IDENTIFIER);
     assertThat(cache.cache().policy().expireAfterAccess()).isNotPresent();
@@ -188,7 +254,14 @@ public class TestRESTTableCache {
                 RESTCatalogProperties.TABLE_CACHE_EXPIRE_AFTER_WRITE_MS,
                 String.valueOf(expirationInterval.toMillis())),
             ticker);
-    cache.put(SESSION_ID, TABLE_IDENTIFIER, TABLE_SUPPLIER, ETAG);
+    cache.put(
+        SESSION_ID,
+        TABLE_IDENTIFIER,
+        TABLE_SUPPLIER,
+        ETAG,
+        tableMetadata(TABLE_NAME),
+        Map.of(),
+        ImmutableList.of());
 
     assertThat(cache.getIfPresent(SESSION_ID, TABLE_IDENTIFIER)).isNotNull();
 
@@ -196,5 +269,9 @@ public class TestRESTTableCache {
     cache.cache().cleanUp();
 
     assertThat(cache.getIfPresent(SESSION_ID, TABLE_IDENTIFIER)).isNull();
+  }
+
+  private TableMetadata tableMetadata(String tableName) {
+    return new TestTables.TestTableOperations(tableName, temp.toFile()).current();
   }
 }
