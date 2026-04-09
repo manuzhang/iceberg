@@ -1311,4 +1311,32 @@ public class TestRewriteDataFilesProcedure extends ExtensionsTestBase {
         .as("New branch snapshot must be a child of the previous branch snapshot")
         .isEqualTo(branchSnapshotBeforeCompaction);
   }
+
+  @TestTemplate
+  public void testRewriteDataFilesWithDoubleSlashInTableLocation() {
+    // Test for https://github.com/apache/iceberg/issues/15908
+    // When the catalog generates a table location with double slashes (//)
+    // (e.g., when HMS warehouse path has a trailing slash), rewrite_data_files
+    // (OPTIMIZE) should not corrupt data or delete valid files.
+    assumeThat(catalogName)
+        .as("Custom table locations are not supported for Hadoop catalog tables")
+        .isNotEqualTo(SparkCatalogConfig.HADOOP.catalogName());
+
+    String locationWithDoubleSlash = "file://" + temp.toAbsolutePath() + "//issue_15908";
+    sql(
+        "CREATE TABLE %s (c1 int, c2 string, c3 string) USING iceberg LOCATION '%s'",
+        tableName, locationWithDoubleSlash);
+
+    insertData(10);
+    List<Object[]> expectedData = currentData();
+
+    List<Object[]> output =
+        sql("CALL %s.system.rewrite_data_files(table => '%s')", catalogName, tableIdent);
+    assertEquals(
+        "Action should rewrite 10 data files and add 1 data file",
+        row(10, 1),
+        Arrays.copyOf(output.get(0), 2));
+
+    assertEquals("Data should be unchanged after rewrite", expectedData, currentData());
+  }
 }
