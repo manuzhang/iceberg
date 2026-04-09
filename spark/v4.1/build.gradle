@@ -251,6 +251,14 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     integrationImplementation libs.junit.platform.launcher
     integrationImplementation libs.slf4j.simple
     integrationImplementation libs.assertj.core
+    integrationImplementation libs.testcontainers
+    integrationImplementation libs.testcontainers.junit.jupiter
+    integrationImplementation libs.testcontainers.minio
+    integrationImplementation platform(libs.awssdk.bom)
+    integrationImplementation("software.amazon.awssdk:s3")
+    integrationImplementation project(':iceberg-core')
+    integrationImplementation project(':iceberg-aws')
+    integrationImplementation project(':iceberg-hive-metastore')
     integrationImplementation project(path: ':iceberg-api', configuration: 'testArtifacts')
     integrationImplementation project(path: ':iceberg-hive-metastore', configuration: 'testArtifacts')
     integrationImplementation project(path: ":iceberg-spark:iceberg-spark-${sparkMajorVersion}_${scalaVersion}", configuration: 'testArtifacts')
@@ -258,6 +266,7 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
 
     // runtime dependencies for running Hive Catalog based integration test
     integrationRuntimeOnly project(':iceberg-hive-metastore')
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-aws:${libs.versions.hadoop3.get()}")
     // runtime dependencies for running REST Catalog based integration test
     integrationRuntimeOnly project(path: ':iceberg-core', configuration: 'testArtifacts')
     integrationRuntimeOnly (project(path: ':iceberg-open-api', configuration: 'testFixturesRuntimeElements'))
@@ -323,4 +332,3 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
 
   apply from: "${rootDir}/runtime-deps.gradle"
 }
-
