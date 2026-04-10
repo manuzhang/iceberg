@@ -86,11 +86,13 @@ class RESTTableCache implements Closeable {
       Supplier<BaseTable> tableSupplier,
       String eTag,
       TableMetadata tableMetadata,
+      TableMetadata responseTableMetadata,
       Map<String, String> tableConfig,
       List<Credential> credentials) {
     tableCache.put(
         SessionIdTableId.of(sessionId, identifier),
-        TableWithETag.of(tableSupplier, eTag, tableMetadata, tableConfig, credentials));
+        TableWithETag.of(
+            tableSupplier, eTag, tableMetadata, responseTableMetadata, tableConfig, credentials));
   }
 
   public void invalidate(String sessionId, TableIdentifier identifier) {
@@ -131,6 +133,14 @@ class RESTTableCache implements Closeable {
 
     TableMetadata tableMetadata();
 
+    /**
+     * The table metadata as returned directly by the server response, before any lazy
+     * snapshotsSupplier is attached (i.e. the metadata without a context-bound supplier). Used to
+     * rebuild a fresh table in {@code tableWithCurrentContext} without triggering the original
+     * session's supplier.
+     */
+    TableMetadata responseTableMetadata();
+
     Map<String, String> tableConfig();
 
     List<Credential> credentials();
@@ -139,12 +149,14 @@ class RESTTableCache implements Closeable {
         Supplier<BaseTable> tableSupplier,
         String eTag,
         TableMetadata tableMetadata,
+        TableMetadata responseTableMetadata,
         Map<String, String> tableConfig,
         List<Credential> credentials) {
       return ImmutableTableWithETag.builder()
           .supplier(tableSupplier)
           .eTag(eTag)
           .tableMetadata(tableMetadata)
+          .responseTableMetadata(responseTableMetadata)
           .putAllTableConfig(tableConfig)
           .addAllCredentials(credentials)
           .build();

@@ -607,6 +607,76 @@ public class TestFreshnessAwareLoading extends TestBaseWithRESTServer {
     assertThat(tableWithCollidingSessionId.io()).isSameAs(fileIOByToken.get("token-b"));
   }
 
+  @Test
+  public void refsSnapshotSupplierUsesCurrentContextAfter304() {
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+    Map<String, FileIO> fileIOByToken = Maps.newHashMap();
+
+    RESTSessionCatalog sessionCatalog =
+        new RESTSessionCatalog(
+            config -> adapter,
+            (context, properties) ->
+                fileIOByToken.computeIfAbsent(
+                    tokenForContext(context),
+                    token -> Mockito.mock(FileIO.class, "io-for-" + token)));
+    sessionCatalog.initialize(
+        "test_session_catalog",
+        Map.of(
+            RESTCatalogProperties.SNAPSHOT_LOADING_MODE,
+            RESTCatalogProperties.SnapshotMode.REFS.name()));
+
+    SessionContext contextA =
+        new SessionContext("colliding_session_id", "user-a", Map.of("token", "token-a"), Map.of());
+    SessionContext contextB =
+        new SessionContext("colliding_session_id", "user-b", Map.of("token", "token-b"), Map.of());
+
+    sessionCatalog.createNamespace(contextA, TABLE.namespace());
+    sessionCatalog.buildTable(contextA, TABLE, SCHEMA).create();
+
+    // Context A loads the table — full REFS response, only current snapshot in metadata
+    BaseTable tableA = (BaseTable) sessionCatalog.loadTable(contextA, TABLE);
+    assertThat(tableA.io()).isSameAs(fileIOByToken.get("token-a"));
+
+    // Intercept only the REFS+If-None-Match request to simulate a 304; let snapshots=all through.
+    Mockito.doAnswer(
+            invocation -> {
+              HTTPRequest req = invocation.getArgument(0);
+              boolean isRefsRequest =
+                  "refs".equals(req.queryParameters().get("snapshots"))
+                      && req.headers().entries().stream()
+                          .anyMatch(e -> HttpHeaders.IF_NONE_MATCH.equals(e.name()));
+              return isRefsRequest ? null : invocation.callRealMethod();
+            })
+        .when(adapter)
+        .execute(
+            matches(HTTPRequest.HTTPMethod.GET, RESOURCE_PATHS.table(TABLE)),
+            eq(LoadTableResponse.class),
+            any(),
+            any());
+
+    // Context B loads the table — 304, same session ID as context A
+    BaseTable tableB = (BaseTable) sessionCatalog.loadTable(contextB, TABLE);
+
+    // FileIO for context B must be bound to token-b, not token-a
+    assertThat(fileIOByToken).containsKeys("token-a", "token-b");
+    assertThat(tableB.io()).isSameAs(fileIOByToken.get("token-b"));
+
+    // Calling snapshots() on tableB must trigger a fresh snapshots=all request bound to context B.
+    // Verify that the adapter receives a snapshots=all request after the 304 hit (the supplier was
+    // rebound to the current context, not reused from context A's original supplier).
+    tableB.snapshots();
+    verify(adapter, times(1))
+        .execute(
+            matches(
+                HTTPRequest.HTTPMethod.GET,
+                RESOURCE_PATHS.table(TABLE),
+                Map.of(),
+                Map.of("snapshots", "all")),
+            eq(LoadTableResponse.class),
+            any(),
+            any());
+  }
+
   private String tokenForContext(SessionContext context) {
     Map<String, String> credentials = context.credentials();
     if (credentials == null) {

@@ -85,6 +85,7 @@ public class TestRESTTableCache {
         TABLE_SUPPLIER,
         ETAG,
         tableMetadata(TABLE_NAME),
+        tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
 
@@ -107,6 +108,7 @@ public class TestRESTTableCache {
         TABLE_SUPPLIER,
         ETAG,
         tableMetadata(TABLE_NAME),
+        tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
 
@@ -124,6 +126,7 @@ public class TestRESTTableCache {
         TABLE_SUPPLIER,
         ETAG,
         tableMetadata(TABLE_NAME),
+        tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
     cache.put(
@@ -131,6 +134,7 @@ public class TestRESTTableCache {
         TABLE_IDENTIFIER,
         TABLE_SUPPLIER,
         ETAG,
+        tableMetadata(TABLE_NAME),
         tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
@@ -159,6 +163,7 @@ public class TestRESTTableCache {
           TABLE_SUPPLIER,
           ETAG,
           tableMetadata(identifier.name()),
+          tableMetadata(identifier.name()),
           Map.of(),
           ImmutableList.of());
     }
@@ -179,6 +184,7 @@ public class TestRESTTableCache {
         TABLE_SUPPLIER,
         ETAG,
         tableMetadata(TABLE_NAME),
+        tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
     cache.put(
@@ -186,6 +192,7 @@ public class TestRESTTableCache {
         otherTableIdentifier,
         TABLE_SUPPLIER,
         ETAG,
+        tableMetadata(otherTableIdentifier.name()),
         tableMetadata(otherTableIdentifier.name()),
         Map.of(),
         ImmutableList.of());
@@ -206,6 +213,7 @@ public class TestRESTTableCache {
         TABLE_SUPPLIER,
         ETAG,
         tableMetadata(TABLE_NAME),
+        tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
     cache.cache().cleanUp();
@@ -222,6 +230,7 @@ public class TestRESTTableCache {
         TABLE_IDENTIFIER,
         TABLE_SUPPLIER,
         ETAG,
+        tableMetadata(TABLE_NAME),
         tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());
@@ -262,6 +271,7 @@ public class TestRESTTableCache {
         TABLE_IDENTIFIER,
         TABLE_SUPPLIER,
         ETAG,
+        tableMetadata(TABLE_NAME),
         tableMetadata(TABLE_NAME),
         Map.of(),
         ImmutableList.of());

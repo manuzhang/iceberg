@@ -523,11 +523,14 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     AuthSession contextualSession = authManager.contextualSession(context, catalogAuth);
     AuthSession tableSession =
         authManager.tableSession(finalIdentifier, tableConf, contextualSession);
+    // responseTableMetadata is the server's raw response metadata — before any lazy
+    // snapshotsSupplier is attached — used to rebuild the table for new callers on 304.
+    TableMetadata responseTableMetadata = response.tableMetadata();
     TableMetadata tableMetadata;
 
     if (snapshotMode == SnapshotMode.REFS) {
       tableMetadata =
-          TableMetadata.buildFrom(response.tableMetadata())
+          TableMetadata.buildFrom(responseTableMetadata)
               .withMetadataLocation(response.metadataLocation())
               .setPreviousFileLocation(null)
               .setSnapshotsSupplier(
@@ -538,7 +541,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
               .discardChanges()
               .build();
     } else {
-      tableMetadata = response.tableMetadata();
+      tableMetadata = responseTableMetadata;
     }
 
     List<Credential> credentials = response.credentials();
@@ -555,6 +558,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
           tableSupplier,
           eTag,
           tableMetadata,
+          responseTableMetadata,
           tableConf,
           credentials);
     }
@@ -573,10 +577,32 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
         authManager.tableSession(identifier, cachedTable.tableConfig(), contextualSession);
     RESTClient tableClient = client.withAuthSession(tableSession);
 
+    TableMetadata tableMetadata = cachedTable.tableMetadata();
+    if (snapshotMode == SnapshotMode.REFS && !tableMetadata.snapshotsLoaded()) {
+      // Rebuild the TableMetadata with a fresh snapshotsSupplier bound to the current context so
+      // that lazy snapshot loading uses the caller's credentials rather than those of the session
+      // that originally populated the cache. We start from responseTableMetadata (no lazy supplier)
+      // to avoid triggering the original supplier during the buildFrom copy. If the supplier has
+      // already been triggered (snapshotsLoaded() == true), the cached metadata already has the
+      // full snapshot list and can be used safely without any context-bound supplier.
+      TableMetadata responseTableMetadata = cachedTable.responseTableMetadata();
+      tableMetadata =
+          TableMetadata.buildFrom(responseTableMetadata)
+              .withMetadataLocation(responseTableMetadata.metadataFileLocation())
+              .setPreviousFileLocation(null)
+              .setSnapshotsSupplier(
+                  () ->
+                      loadInternal(context, identifier, SnapshotMode.ALL, Map.of(), h -> {})
+                          .tableMetadata()
+                          .snapshots())
+              .discardChanges()
+              .build();
+    }
+
     Supplier<BaseTable> tableSupplier =
         createTableSupplier(
             identifier,
-            cachedTable.tableMetadata(),
+            tableMetadata,
             context,
             tableClient,
             cachedTable.tableConfig(),
