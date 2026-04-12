@@ -531,6 +531,11 @@ public class TableMetadata implements Serializable {
     return snapshots;
   }
 
+  /** Returns true if all snapshots have been fully loaded (no pending lazy supplier). */
+  public boolean snapshotsLoaded() {
+    return snapshotsLoaded;
+  }
+
   private synchronized void ensureSnapshotsLoaded() {
     if (!snapshotsLoaded) {
       List<Snapshot> loadedSnapshots = Lists.newArrayList(snapshotsSupplier.get());
