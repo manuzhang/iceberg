@@ -21,7 +21,6 @@ package org.apache.iceberg;
 import static org.apache.iceberg.TableProperties.MANIFEST_MERGE_ENABLED;
 import static org.apache.iceberg.TableProperties.MANIFEST_MIN_MERGE_COUNT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.io.IOException;
@@ -248,16 +247,35 @@ public class TestBaseIncrementalChangelogScan
   }
 
   @TestTemplate
-  public void testDeleteFilesAreNotSupported() {
+  public void testDeleteFiles() {
     assumeThat(formatVersion).isEqualTo(2);
 
     table.newFastAppend().appendFile(FILE_A2).appendFile(FILE_B).commit();
 
+    Snapshot appendSnapshot = table.currentSnapshot();
+
     table.newRowDelta().addDeletes(FILE_A2_DELETES).commit();
 
-    assertThatThrownBy(() -> plan(newScan()))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("Delete files are currently not supported in changelog scans");
+    Snapshot deleteSnapshot = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan()
+            .fromSnapshotExclusive(appendSnapshot.snapshotId())
+            .toSnapshot(deleteSnapshot.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId())
+        .as("Snapshot must match")
+        .isEqualTo(deleteSnapshot.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A2.location());
+    assertThat(task.addedDeletes())
+        .as("Must include one added delete file")
+        .containsExactly(FILE_A2_DELETES);
+    assertThat(task.existingDeletes()).as("Must be no existing deletes").isEmpty();
   }
 
   // plans tasks and reorders them to have deterministic order

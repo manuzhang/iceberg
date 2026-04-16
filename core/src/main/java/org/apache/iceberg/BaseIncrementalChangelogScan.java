@@ -21,6 +21,7 @@ package org.apache.iceberg;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -64,6 +65,13 @@ class BaseIncrementalChangelogScan
     }
 
     Set<Long> changelogSnapshotIds = toSnapshotIds(changelogSnapshots);
+    Map<Long, Integer> snapshotOrdinals = computeSnapshotOrdinals(changelogSnapshots);
+
+    List<ManifestFile> newDeleteManifests =
+        FluentIterable.from(changelogSnapshots)
+            .transformAndConcat(snapshot -> snapshot.deleteManifests(table().io()))
+            .filter(manifest -> changelogSnapshotIds.contains(manifest.snapshotId()))
+            .toList();
 
     Set<ManifestFile> newDataManifests =
         FluentIterable.from(changelogSnapshots)
@@ -72,7 +80,7 @@ class BaseIncrementalChangelogScan
             .toSet();
 
     ManifestGroup manifestGroup =
-        new ManifestGroup(table().io(), newDataManifests, ImmutableList.of())
+        new ManifestGroup(table().io(), newDataManifests, newDeleteManifests)
             .specsById(table().specs())
             .caseSensitive(isCaseSensitive())
             .select(scanColumns())
@@ -89,7 +97,11 @@ class BaseIncrementalChangelogScan
       manifestGroup = manifestGroup.planWith(planExecutor());
     }
 
-    return manifestGroup.plan(new CreateDataFileChangeTasks(changelogSnapshots));
+    CloseableIterable<ChangelogScanTask> dataFileChangeTasks =
+        manifestGroup.plan(new CreateDataFileChangeTasks(snapshotOrdinals));
+    CloseableIterable<ChangelogScanTask> deleteFileChangeTasks =
+        planDeleteFileChanges(changelogSnapshots, snapshotOrdinals);
+    return CloseableIterable.concat(ImmutableList.of(dataFileChangeTasks, deleteFileChangeTasks));
   }
 
   @Override
@@ -105,16 +117,94 @@ class BaseIncrementalChangelogScan
 
     for (Snapshot snapshot : SnapshotUtil.ancestorsBetween(table(), toIdIncl, fromIdExcl)) {
       if (!snapshot.operation().equals(DataOperations.REPLACE)) {
-        if (!snapshot.deleteManifests(table().io()).isEmpty()) {
-          throw new UnsupportedOperationException(
-              "Delete files are currently not supported in changelog scans");
-        }
-
         changelogSnapshots.addFirst(snapshot);
       }
     }
 
     return changelogSnapshots;
+  }
+
+  private CloseableIterable<ChangelogScanTask> planDeleteFileChanges(
+      Deque<Snapshot> snapshots, Map<Long, Integer> snapshotOrdinals) {
+    Iterable<CloseableIterable<ChangelogScanTask>> changelogTasks =
+        FluentIterable.from(snapshots)
+            .transform(snapshot -> planDeleteFileChanges(snapshot, snapshotOrdinals));
+    return CloseableIterable.concat(changelogTasks);
+  }
+
+  private CloseableIterable<ChangelogScanTask> planDeleteFileChanges(
+      Snapshot snapshot, Map<Long, Integer> snapshotOrdinals) {
+    List<ManifestFile> snapshotDeleteManifests = snapshot.deleteManifests(table().io());
+    List<ManifestFile> addedDeleteManifests =
+        FluentIterable.from(snapshotDeleteManifests)
+            .filter(manifest -> manifest.snapshotId() == snapshot.snapshotId())
+            .toList();
+
+    if (addedDeleteManifests.isEmpty()) {
+      return CloseableIterable.empty();
+    }
+
+    List<ManifestFile> existingDeleteManifests =
+        FluentIterable.from(snapshotDeleteManifests)
+            .filter(manifest -> manifest.snapshotId() != snapshot.snapshotId())
+            .toList();
+
+    DeleteFileIndex addedDeletes =
+        DeleteFileIndex.builderFor(table().io(), addedDeleteManifests)
+            .specsById(table().specs())
+            .filterData(filter())
+            .caseSensitive(isCaseSensitive())
+            .build();
+
+    DeleteFileIndex existingDeletes =
+        DeleteFileIndex.builderFor(table().io(), existingDeleteManifests)
+            .specsById(table().specs())
+            .filterData(filter())
+            .caseSensitive(isCaseSensitive())
+            .build();
+
+    ManifestGroup dataManifestGroup =
+        new ManifestGroup(table().io(), snapshot.dataManifests(table().io()), ImmutableList.of())
+            .specsById(table().specs())
+            .caseSensitive(isCaseSensitive())
+            .select(scanColumns())
+            .filterData(filter())
+            .ignoreDeleted()
+            .columnsToKeepStats(columnsToKeepStats());
+
+    if (shouldIgnoreResiduals()) {
+      dataManifestGroup = dataManifestGroup.ignoreResiduals();
+    }
+
+    if (snapshot.dataManifests(table().io()).size() > 1 && shouldPlanWithExecutor()) {
+      dataManifestGroup = dataManifestGroup.planWith(planExecutor());
+    }
+
+    CloseableIterable<ChangelogScanTask> tasks =
+        dataManifestGroup.plan(
+            (entries, context) ->
+                CloseableIterable.transform(
+                    entries,
+                    entry -> {
+                      DeleteFile[] addedDeleteFiles = addedDeletes.forEntry(entry);
+                      if (addedDeleteFiles.length == 0) {
+                        return null;
+                      }
+
+                      DeleteFile[] existingDeleteFiles = existingDeletes.forEntry(entry);
+                      DataFile dataFile = entry.file().copy(context.shouldKeepStats());
+                      return new BaseDeletedRowsScanTask(
+                          snapshotOrdinals.get(snapshot.snapshotId()),
+                          snapshot.snapshotId(),
+                          dataFile,
+                          addedDeleteFiles,
+                          existingDeleteFiles,
+                          context.schemaAsString(),
+                          context.specAsString(),
+                          context.residuals());
+                    }));
+
+    return CloseableIterable.filter(tasks, task -> task != null);
   }
 
   private Set<Long> toSnapshotIds(Collection<Snapshot> snapshots) {
@@ -138,8 +228,8 @@ class BaseIncrementalChangelogScan
 
     private final Map<Long, Integer> snapshotOrdinals;
 
-    CreateDataFileChangeTasks(Deque<Snapshot> snapshots) {
-      this.snapshotOrdinals = computeSnapshotOrdinals(snapshots);
+    CreateDataFileChangeTasks(Map<Long, Integer> snapshotOrdinals) {
+      this.snapshotOrdinals = snapshotOrdinals;
     }
 
     @Override
