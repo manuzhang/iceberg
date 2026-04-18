@@ -43,14 +43,15 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestartStrategyOptions;
 import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
-import org.apache.flink.runtime.OperatorIDPair;
 import org.apache.flink.runtime.client.JobExecutionException;
-import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.graph.StreamEdge;
+import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.graph.StreamNode;
+import org.apache.flink.streaming.runtime.partitioner.ForwardPartitioner;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.DataFormatConverters;
@@ -304,30 +305,28 @@ class TestDynamicIcebergSink extends TestFlinkIcebergSinkBase {
         .overwrite(false)
         .append();
 
-    boolean generatorAndSinkChained = false;
-    for (JobVertex vertex : env.getStreamGraph().getJobGraph().getVertices()) {
-      boolean generatorInThisVertex = false;
-      boolean sinkInThisVertex = false;
-      for (OperatorIDPair operatorID : vertex.getOperatorIDs()) {
-        String uid = operatorID.getUserDefinedOperatorUid();
-        if (uid == null) {
-          continue;
-        }
+    StreamGraph streamGraph = env.getStreamGraph();
+    StreamNode generatorNode = findNodeByUidSuffix(streamGraph, "-generator");
+    StreamNode forwardWriterNode = findNodeByUidSuffix(streamGraph, "-forward-writer");
 
-        if (uid.endsWith("-forward-writer")) {
-          sinkInThisVertex = true;
-        } else if (uid.endsWith("-generator")) {
-          generatorInThisVertex = true;
-        }
-      }
+    StreamEdge edgeToForwardWriter =
+        generatorNode.getOutEdges().stream()
+            .filter(edge -> edge.getTargetId() == forwardWriterNode.getId())
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new AssertionError(
+                        "Missing edge between generator and forward-writer nodes in stream graph"));
 
-      generatorAndSinkChained = generatorInThisVertex && sinkInThisVertex;
-      if (generatorAndSinkChained) {
-        break;
-      }
-    }
+    assertThat(edgeToForwardWriter.getPartitioner()).isInstanceOf(ForwardPartitioner.class);
+  }
 
-    assertThat(generatorAndSinkChained).isTrue();
+  private static StreamNode findNodeByUidSuffix(StreamGraph streamGraph, String uidSuffix) {
+    return streamGraph.getStreamNodes().stream()
+        .filter(node -> node.getTransformationUID() != null)
+        .filter(node -> node.getTransformationUID().endsWith(uidSuffix))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Missing node with uid suffix: " + uidSuffix));
   }
 
   @Test
