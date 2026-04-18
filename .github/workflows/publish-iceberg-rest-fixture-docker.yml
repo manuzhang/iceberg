@@ -69,6 +69,7 @@ jobs:
         run: |
           docker login -u "$DOCKERHUB_USER" -p "$DOCKERHUB_TOKEN"
       - name: Set the tagged version
+        # for tag 'apache-iceberg-1.7.1', publish image 'apache/iceberg-rest-fixture:1.7.1'
         if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
         env:
           REF: ${{ github.ref }}
