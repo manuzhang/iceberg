@@ -109,9 +109,9 @@ public class LockManagers {
     }
 
     public ScheduledExecutorService scheduler() {
-      if (scheduler == null) {
+      if (scheduler == null || scheduler.isShutdown()) {
         synchronized (BaseLockManager.class) {
-          if (scheduler == null) {
+          if (scheduler == null || scheduler.isShutdown()) {
             scheduler =
                 MoreExecutors.getExitingScheduledExecutorService(
                     (ScheduledThreadPoolExecutor)
