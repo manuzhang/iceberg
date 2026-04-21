@@ -159,15 +159,17 @@ public class LockManagers {
 
     @Override
     public void close() throws Exception {
-      if (scheduler != null) {
-        List<Runnable> tasks = scheduler.shutdownNow();
-        tasks.forEach(
-            task -> {
-              if (task instanceof Future) {
-                ((Future<?>) task).cancel(true);
-              }
-            });
-        scheduler = null;
+      synchronized (BaseLockManager.class) {
+        if (scheduler != null) {
+          List<Runnable> tasks = scheduler.shutdownNow();
+          tasks.forEach(
+              task -> {
+                if (task instanceof Future) {
+                  ((Future<?>) task).cancel(true);
+                }
+              });
+          scheduler = null;
+        }
       }
     }
   }
