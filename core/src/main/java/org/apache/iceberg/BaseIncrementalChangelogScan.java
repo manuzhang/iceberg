@@ -21,7 +21,9 @@ package org.apache.iceberg;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.ManifestGroup.CreateTasksFunction;
@@ -30,6 +32,7 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.collect.FluentIterable;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.iceberg.util.SnapshotUtil;
 import org.apache.iceberg.util.TableScanUtil;
 
@@ -63,10 +66,41 @@ class BaseIncrementalChangelogScan
       return CloseableIterable.empty();
     }
 
-    Set<Long> changelogSnapshotIds = toSnapshotIds(changelogSnapshots);
+    CloseableIterable<ChangelogScanTask> dataFileTasks = planDataFileTasks(changelogSnapshots);
+    CloseableIterable<ChangelogScanTask> deletedRowsTasks =
+        planDeletedRowsTasks(changelogSnapshots);
+    return CloseableIterable.concat(ImmutableList.of(dataFileTasks, deletedRowsTasks));
+  }
+
+  @Override
+  public CloseableIterable<ScanTaskGroup<ChangelogScanTask>> planTasks() {
+    return TableScanUtil.planTaskGroups(
+        planFiles(), targetSplitSize(), splitLookback(), splitOpenFileCost());
+  }
+
+  // builds a collection of changelog snapshots (oldest to newest)
+  // the order of the snapshots is important as it is used to determine change ordinals
+  private Deque<Snapshot> orderedChangelogSnapshots(Long fromIdExcl, long toIdIncl) {
+    Deque<Snapshot> changelogSnapshots = new ArrayDeque<>();
+
+    for (Snapshot snapshot : SnapshotUtil.ancestorsBetween(table(), toIdIncl, fromIdExcl)) {
+      if (!snapshot.operation().equals(DataOperations.REPLACE)) {
+        changelogSnapshots.addFirst(snapshot);
+      }
+    }
+
+    return changelogSnapshots;
+  }
+
+  private Set<Long> toSnapshotIds(Collection<Snapshot> snapshots) {
+    return snapshots.stream().map(Snapshot::snapshotId).collect(Collectors.toSet());
+  }
+
+  private CloseableIterable<ChangelogScanTask> planDataFileTasks(Deque<Snapshot> snapshots) {
+    Set<Long> changelogSnapshotIds = toSnapshotIds(snapshots);
 
     Set<ManifestFile> newDataManifests =
-        FluentIterable.from(changelogSnapshots)
+        FluentIterable.from(snapshots)
             .transformAndConcat(snapshot -> snapshot.dataManifests(table().io()))
             .filter(manifest -> changelogSnapshotIds.contains(manifest.snapshotId()))
             .toSet();
@@ -89,36 +123,101 @@ class BaseIncrementalChangelogScan
       manifestGroup = manifestGroup.planWith(planExecutor());
     }
 
-    return manifestGroup.plan(new CreateDataFileChangeTasks(changelogSnapshots));
+    return manifestGroup.plan(new CreateDataFileChangeTasks(snapshots));
   }
 
-  @Override
-  public CloseableIterable<ScanTaskGroup<ChangelogScanTask>> planTasks() {
-    return TableScanUtil.planTaskGroups(
-        planFiles(), targetSplitSize(), splitLookback(), splitOpenFileCost());
-  }
+  private CloseableIterable<ChangelogScanTask> planDeletedRowsTasks(Deque<Snapshot> snapshots) {
+    Map<Long, Integer> snapshotOrdinals = computeSnapshotOrdinals(snapshots);
+    ImmutableList.Builder<CloseableIterable<ChangelogScanTask>> snapshotTasks =
+        ImmutableList.builder();
 
-  // builds a collection of changelog snapshots (oldest to newest)
-  // the order of the snapshots is important as it is used to determine change ordinals
-  private Deque<Snapshot> orderedChangelogSnapshots(Long fromIdExcl, long toIdIncl) {
-    Deque<Snapshot> changelogSnapshots = new ArrayDeque<>();
-
-    for (Snapshot snapshot : SnapshotUtil.ancestorsBetween(table(), toIdIncl, fromIdExcl)) {
-      if (!snapshot.operation().equals(DataOperations.REPLACE)) {
-        if (!snapshot.deleteManifests(table().io()).isEmpty()) {
-          throw new UnsupportedOperationException(
-              "Delete files are currently not supported in changelog scans");
-        }
-
-        changelogSnapshots.addFirst(snapshot);
+    for (Snapshot snapshot : snapshots) {
+      List<ManifestFile> deleteManifests = snapshot.deleteManifests(table().io());
+      if (deleteManifests.isEmpty()) {
+        continue;
       }
+
+      SnapshotChanges.Builder changesBuilder =
+          SnapshotChanges.builderFor(snapshot, table().io(), table().specs());
+      if (shouldPlanWithExecutor()) {
+        changesBuilder.executeWith(planExecutor());
+      }
+
+      DeleteFileIndex addedDeletes =
+          DeleteFileIndex.builderFor(changesBuilder.build().addedDeleteFiles())
+              .specsById(table().specs())
+              .build();
+
+      if (addedDeletes.isEmpty()) {
+        continue;
+      }
+
+      DeleteFileIndex existingDeletes = existingDeletesIndex(snapshot);
+
+      ManifestGroup manifestGroup =
+          new ManifestGroup(table().io(), snapshot.dataManifests(table().io()), ImmutableList.of())
+              .specsById(table().specs())
+              .caseSensitive(isCaseSensitive())
+              .select(scanColumns())
+              .filterData(filter())
+              .ignoreDeleted()
+              .columnsToKeepStats(columnsToKeepStats());
+
+      if (table().formatVersion() >= 3) {
+        Set<String> referencedDataFiles =
+            FluentIterable.from(addedDeletes.referencedDeleteFiles())
+                .transform(ContentFileUtil::referencedDataFileLocation)
+                .filter(Objects::nonNull)
+                .toSet();
+        manifestGroup =
+            manifestGroup.filterManifestEntries(
+                entry -> referencedDataFiles.contains(entry.file().location().toString()));
+      }
+
+      if (shouldIgnoreResiduals()) {
+        manifestGroup = manifestGroup.ignoreResiduals();
+      }
+
+      if (shouldPlanWithExecutor()) {
+        manifestGroup = manifestGroup.planWith(planExecutor());
+      }
+
+      int changeOrdinal = snapshotOrdinals.get(snapshot.snapshotId());
+      snapshotTasks.add(
+          manifestGroup.plan(
+              new CreateDeletedRowsTasks(
+                  changeOrdinal, snapshot.snapshotId(), existingDeletes, addedDeletes)));
     }
 
-    return changelogSnapshots;
+    return CloseableIterable.concat(snapshotTasks.build());
   }
 
-  private Set<Long> toSnapshotIds(Collection<Snapshot> snapshots) {
-    return snapshots.stream().map(Snapshot::snapshotId).collect(Collectors.toSet());
+  private DeleteFileIndex existingDeletesIndex(Snapshot snapshot) {
+    Long parentSnapshotId = snapshot.parentId();
+    if (parentSnapshotId == null) {
+      return DeleteFileIndex.builderFor(ImmutableList.of()).specsById(table().specs()).build();
+    }
+
+    Snapshot parentSnapshot = table().snapshot(parentSnapshotId);
+    if (parentSnapshot == null) {
+      return DeleteFileIndex.builderFor(ImmutableList.of()).specsById(table().specs()).build();
+    }
+
+    DeleteFileIndex.Builder builder =
+        DeleteFileIndex.builderFor(table().io(), parentSnapshot.deleteManifests(table().io()))
+            .specsById(table().specs())
+            .caseSensitive(isCaseSensitive())
+            .filterData(filter());
+
+    if (shouldPlanWithExecutor()) {
+      builder = builder.planWith(planExecutor());
+    }
+
+    if (shouldIgnoreResiduals()) {
+      builder = builder.ignoreResiduals();
+    }
+
+    return builder.build();
   }
 
   private static Map<Long, Integer> computeSnapshotOrdinals(Deque<Snapshot> snapshots) {
@@ -178,6 +277,52 @@ class BaseIncrementalChangelogScan
                 throw new IllegalArgumentException("Unexpected entry status: " + entry.status());
             }
           });
+    }
+  }
+
+  private static class CreateDeletedRowsTasks implements CreateTasksFunction<ChangelogScanTask> {
+    private final int changeOrdinal;
+    private final long commitSnapshotId;
+    private final DeleteFileIndex existingDeleteIndex;
+    private final DeleteFileIndex addedDeleteIndex;
+
+    CreateDeletedRowsTasks(
+        int changeOrdinal,
+        long commitSnapshotId,
+        DeleteFileIndex existingDeleteIndex,
+        DeleteFileIndex addedDeleteIndex) {
+      this.changeOrdinal = changeOrdinal;
+      this.commitSnapshotId = commitSnapshotId;
+      this.existingDeleteIndex = existingDeleteIndex;
+      this.addedDeleteIndex = addedDeleteIndex;
+    }
+
+    @Override
+    public CloseableIterable<ChangelogScanTask> apply(
+        CloseableIterable<ManifestEntry<DataFile>> entries, TaskContext context) {
+      CloseableIterable<ChangelogScanTask> tasks =
+          CloseableIterable.transform(
+              entries,
+              entry -> {
+                DeleteFile[] addedDeletes = addedDeleteIndex.forEntry(entry);
+                if (addedDeletes.length == 0) {
+                  return null;
+                }
+
+                DeleteFile[] existingDeletes = existingDeleteIndex.forEntry(entry);
+                DataFile dataFile = entry.file().copy(context.shouldKeepStats());
+                return new BaseDeletedRowsScanTask(
+                    changeOrdinal,
+                    commitSnapshotId,
+                    dataFile,
+                    addedDeletes,
+                    existingDeletes,
+                    context.schemaAsString(),
+                    context.specAsString(),
+                    context.residuals());
+              });
+
+      return CloseableIterable.filter(tasks, Objects::nonNull);
     }
   }
 }
