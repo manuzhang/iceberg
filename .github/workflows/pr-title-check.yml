@@ -30,7 +30,7 @@ jobs:
     name: Validate PR title format
     runs-on: ubuntu-latest
     steps:
-      - name: Validate title follows "Module: Description"
+      - name: Validate PR Title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
