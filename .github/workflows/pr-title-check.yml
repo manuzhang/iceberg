@@ -36,7 +36,7 @@ jobs:
         run: |
           pattern='^[A-Za-z][A-Za-z0-9 ._+/&-]*: .+'
 
-          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+          if ! printf '%s\n' "$PR_TITLE" | grep -Eq "$pattern"; then
             echo "Invalid PR title: '$PR_TITLE'"
             echo "PR titles must follow 'Module: Description' (example: 'Core: Fix manifest reuse in scan planning')."
             exit 1
