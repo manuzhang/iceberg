@@ -106,7 +106,11 @@ public class LockManagers {
       return heartbeatThreads;
     }
 
-    /** Returns the shared scheduler for lock heartbeats. */
+    /**
+     * Returns the shared scheduler for lock heartbeats.
+     *
+     * <p>Callers must not shut down this scheduler. It is shared across lock manager instances.
+     */
     public ScheduledExecutorService scheduler() {
       if (scheduler == null) {
         synchronized (BaseLockManager.class) {
