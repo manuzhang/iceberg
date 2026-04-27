@@ -175,4 +175,5 @@ public class TestInMemoryLockManager {
         .as("only 1 thread should have acquired the lock")
         .isOne();
   }
+
 }
