@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.spark;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -25,8 +27,11 @@ import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.spark.source.HasIcebergCatalog;
+import org.apache.iceberg.util.ArrayUtil;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.analysis.NamespaceAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchFunctionException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -35,6 +40,8 @@ import org.apache.spark.sql.catalyst.analysis.NoSuchViewException;
 import org.apache.spark.sql.catalyst.analysis.NonEmptyNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType;
 import org.apache.spark.sql.connector.catalog.CatalogExtension;
 import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.FunctionCatalog;
@@ -54,6 +61,8 @@ import org.apache.spark.sql.connector.catalog.functions.UnboundFunction;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.Option;
+import scala.collection.JavaConverters;
 
 /**
  * A Spark catalog that can also load non-Iceberg tables.
@@ -428,7 +437,13 @@ public class SparkSessionCatalog<
   public Identifier[] listViews(String... namespace) {
     try {
       if (null != asViewCatalog) {
-        return asViewCatalog.listViews(namespace);
+        Identifier[] views = asViewCatalog.listViews(namespace);
+        if (isViewCatalog()) {
+          views =
+              ArrayUtil.concat(Identifier.class, views, getSessionCatalog().listViews(namespace));
+        }
+
+        return ArrayUtil.concat(Identifier.class, views, listSessionCatalogViews(namespace));
       } else if (isViewCatalog()) {
         return getSessionCatalog().listViews(namespace);
       }
@@ -436,13 +451,29 @@ public class SparkSessionCatalog<
       throw new RuntimeException(e);
     }
 
-    return new Identifier[0];
+    return listSessionCatalogViews(namespace);
+  }
+
+  private Identifier[] listSessionCatalogViews(String[] namespace) {
+    // Spark's SessionCatalog lists views by database name, which maps to single-part namespaces.
+    if (namespace.length != 1) {
+      return new Identifier[0];
+    }
+
+    return JavaConverters.seqAsJavaListConverter(
+            SparkSession.active().sessionState().catalog().listViews(namespace[0], "*"))
+        .asJava()
+        .stream()
+        .filter(view -> view.database().isDefined())
+        .map(view -> Identifier.of(new String[] {view.database().get()}, view.table()))
+        .toArray(Identifier[]::new);
   }
 
   @Override
   public boolean viewExists(Identifier ident) {
     return (asViewCatalog != null && asViewCatalog.viewExists(ident))
-        || (isViewCatalog() && getSessionCatalog().viewExists(ident));
+        || (isViewCatalog() && getSessionCatalog().viewExists(ident))
+        || sessionCatalogViewMetadata(ident) != null;
   }
 
   @Override
@@ -453,7 +484,102 @@ public class SparkSessionCatalog<
       return getSessionCatalog().loadView(ident);
     }
 
+    CatalogTable sessionCatalogView = sessionCatalogViewMetadata(ident);
+    if (sessionCatalogView != null) {
+      return new SessionCatalogView(sessionCatalogView);
+    }
+
     throw new NoSuchViewException(ident);
+  }
+
+  private CatalogTable sessionCatalogViewMetadata(Identifier ident) {
+    if (ident.namespace().length != 1) {
+      return null;
+    }
+
+    TableIdentifier tableIdent =
+        new TableIdentifier(ident.name(), Option.apply(ident.namespace()[0]));
+    try {
+      CatalogTable table =
+          SparkSession.active().sessionState().catalog().getTableMetadata(tableIdent);
+      return CatalogTableType.VIEW().equals(table.tableType()) ? table : null;
+    } catch (NoSuchNamespaceException | NoSuchTableException e) {
+      return null;
+    }
+  }
+
+  private class SessionCatalogView implements View {
+    private final CatalogTable catalogTable;
+
+    SessionCatalogView(CatalogTable catalogTable) {
+      this.catalogTable = catalogTable;
+    }
+
+    @Override
+    public String name() {
+      return catalogTable.identifier().table();
+    }
+
+    @Override
+    public String query() {
+      String query = catalogTable.viewText().isDefined() ? catalogTable.viewText().get() : null;
+      if (query == null && catalogTable.viewOriginalText().isDefined()) {
+        query = catalogTable.viewOriginalText().get();
+      }
+
+      Preconditions.checkState(query != null, "Cannot load SQL for view %s", name());
+      return query;
+    }
+
+    @Override
+    public String currentCatalog() {
+      List<String> catalogAndNamespace =
+          JavaConverters.seqAsJavaListConverter(catalogTable.viewCatalogAndNamespace()).asJava();
+      return catalogAndNamespace.isEmpty() ? catalogName : catalogAndNamespace.get(0);
+    }
+
+    @Override
+    public String[] currentNamespace() {
+      List<String> catalogAndNamespace =
+          JavaConverters.seqAsJavaListConverter(catalogTable.viewCatalogAndNamespace()).asJava();
+      if (catalogAndNamespace.size() > 1) {
+        return catalogAndNamespace.subList(1, catalogAndNamespace.size()).toArray(new String[0]);
+      } else if (catalogTable.identifier().database().isDefined()) {
+        return new String[] {catalogTable.identifier().database().get()};
+      }
+
+      return new String[0];
+    }
+
+    @Override
+    public StructType schema() {
+      return catalogTable.schema();
+    }
+
+    @Override
+    public String[] queryColumnNames() {
+      return JavaConverters.seqAsJavaListConverter(catalogTable.viewQueryColumnNames())
+          .asJava()
+          .toArray(new String[0]);
+    }
+
+    @Override
+    public String[] columnAliases() {
+      return catalogTable.schema().fieldNames();
+    }
+
+    @Override
+    public String[] columnComments() {
+      return Arrays.stream(catalogTable.schema().fields())
+          .map(field -> field.getComment().isDefined() ? field.getComment().get() : null)
+          .toArray(String[]::new);
+    }
+
+    @Override
+    public Map<String, String> properties() {
+      return ImmutableMap.copyOf(
+          JavaConverters.mapAsJavaMapConverter(catalogTable.properties()).asJava());
+    }
   }
 
   @Override
