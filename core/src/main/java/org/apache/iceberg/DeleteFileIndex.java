@@ -69,7 +69,6 @@ import org.apache.iceberg.util.Tasks;
  */
 class DeleteFileIndex {
   private static final DeleteFile[] EMPTY_DELETES = new DeleteFile[0];
-  private static final DeleteFileIndex EMPTY = new DeleteFileIndex(null, null, null, null, null);
 
   private final EqualityDeletes globalDeletes;
   private final PartitionMap<EqualityDeletes> eqDeletesByPartition;
@@ -362,10 +361,6 @@ class DeleteFileIndex {
 
   static Builder builderFor(Iterable<DeleteFile> deleteFiles) {
     return new Builder(deleteFiles);
-  }
-
-  static DeleteFileIndex emptyIndex() {
-    return EMPTY;
   }
 
   static class Builder {
