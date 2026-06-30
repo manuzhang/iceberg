@@ -61,6 +61,13 @@ public class SparkMaterializedView implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
+    if (!(storageTable instanceof SupportsRead)) {
+      throw new IllegalStateException(
+          String.format(
+              "Cannot read materialized view %s because storage table %s does not support reads",
+              icebergView.name(), storageTable.name()));
+    }
+
     return ((SupportsRead) storageTable).newScanBuilder(options);
   }
 

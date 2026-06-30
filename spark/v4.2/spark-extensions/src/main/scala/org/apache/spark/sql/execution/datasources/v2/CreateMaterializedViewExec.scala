@@ -57,6 +57,7 @@ case class CreateMaterializedViewExec(
   override def output: Seq[Attribute] = Nil
 
   override protected def run(): Seq[InternalRow] = {
+    val sparkCatalog = catalog.asInstanceOf[SparkCatalog]
 
     // Check if storageTableIdentifier is provided. If not, generate a default identifier.
     val sparkStorageTableIdentifier = storageTableIdentifier match {
@@ -67,35 +68,43 @@ case class CreateMaterializedViewExec(
           storageTableCatalogName.equals(catalog.name()),
           "Storage table identifier must be in the same catalog as the view." +
             " Found storage table in catalog: %s, expected: %s.",
-          Array[Object](storageTableCatalogName, catalog.name()))
+          storageTableCatalogName,
+          catalog.name())
         catalogAndIdentifier.identifier()
       }
       case None => MaterializedViewUtil.getDefaultMaterializedViewStorageTableIdentifier(ident)
+    }
+
+    if (allowExisting && catalog.viewExists(ident)) {
+      return Nil
+    }
+
+    if (replace) {
+      sparkCatalog.dropTable(sparkStorageTableIdentifier)
     }
 
     // Step 1: Create the storage table BEFORE the MV view metadata.
     // Per spec: "The storage table must exist and be accessible before the
     // materialized view metadata is committed."
     // A newly created MV has a storage table with no snapshots until a refresh is performed.
-    catalog
-      .asInstanceOf[SparkCatalog]
-      .createTable(
-        sparkStorageTableIdentifier,
-        viewSchema,
-        new Array[Transform](0),
-        ImmutableMap.of[String, String]())
+    sparkCatalog.createTable(
+      sparkStorageTableIdentifier,
+      viewSchema,
+      new Array[Transform](0),
+      ImmutableMap.of[String, String]())
 
     // Step 2: Create the MV view metadata with a storage-table reference
     try {
       createView(sparkStorageTableIdentifier.toString) match {
         case Some(_) => // success
-        case None => // allowExisting and view already exists
+        case None =>
+          sparkCatalog.dropTable(sparkStorageTableIdentifier)
       }
     } catch {
       case e: Exception =>
         // If view creation fails, clean up the storage table
         try {
-          catalog.asInstanceOf[SparkCatalog].dropTable(sparkStorageTableIdentifier)
+          sparkCatalog.dropTable(sparkStorageTableIdentifier)
         } catch {
           case _: Exception => // best effort cleanup
         }

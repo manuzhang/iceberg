@@ -559,6 +559,10 @@ public class SparkCatalog extends BaseCatalog {
 
   private boolean isFresh(org.apache.iceberg.view.View view) {
     Table sparkStorageTable = loadStorageTable(view);
+    if (!(sparkStorageTable instanceof SparkTable)) {
+      return false;
+    }
+
     org.apache.iceberg.Table storageTable = ((SparkTable) sparkStorageTable).table();
     if (storageTable.currentSnapshot() == null) {
       return false;

@@ -406,7 +406,7 @@ public class InMemoryCatalog extends BaseMetastoreViewCatalog
     private final TableIdentifier tableIdentifier;
     private final String fullTableName;
 
-    public InMemoryTableOperations(FileIO fileIO, TableIdentifier tableIdentifier) {
+    protected InMemoryTableOperations(FileIO fileIO, TableIdentifier tableIdentifier) {
       this.fileIO = fileIO;
       this.tableIdentifier = tableIdentifier;
       this.fullTableName = fullTableName(catalogName, tableIdentifier);
@@ -477,7 +477,7 @@ public class InMemoryCatalog extends BaseMetastoreViewCatalog
     private final TableIdentifier identifier;
     private final String fullViewName;
 
-    public InMemoryViewOperations(FileIO io, TableIdentifier identifier) {
+    protected InMemoryViewOperations(FileIO io, TableIdentifier identifier) {
       this.io = io;
       this.identifier = identifier;
       this.fullViewName = ViewUtil.fullViewName(catalogName, identifier);

@@ -57,8 +57,9 @@ class IcebergSparkSqlExtensionsParser(delegate: ParserInterface)
   private lazy val substitutor = substitutorCtor.newInstance(SQLConf.get)
   private lazy val astBuilder = new IcebergSqlExtensionsAstBuilder(delegate)
   private lazy final val CREATE_MATERIALIZED_VIEW_PATTERN =
-    "(?i)(CREATE)\\s+MATERIALIZED\\s+(VIEW)".r
-  private lazy final val MATERIALIZED_VIEW_STORED_AS_PATTERN = "(?i)STORED AS\\s*'(\\w+)'\\s*".r
+    "(?i)\\bCREATE\\s+(OR\\s+REPLACE\\s+)?MATERIALIZED\\s+VIEW\\b".r
+  private lazy final val MATERIALIZED_VIEW_STORED_AS_PATTERN =
+    "(?i)\\s+STORED\\s+AS\\s*'([^']+)'".r
 
   /**
    * Parse a string to a DataType.
@@ -148,9 +149,11 @@ class IcebergSparkSqlExtensionsParser(delegate: ParserInterface)
     if (isIcebergCommand(sqlTextAfterSubstitution)) {
       parse(sqlTextAfterSubstitution) { parser => astBuilder.visit(parser.singleStatement()) }
         .asInstanceOf[LogicalPlan]
-    } else if (isCreateMaterializedView(sqlText)) {
-      RewriteViewCommands(SparkSession.active, Option(getMaterializedViewOptions(sqlText)))
-        .apply(delegate.parsePlan(getCreateMaterializedViewStatement(sqlText)))
+    } else if (isCreateMaterializedView(sqlTextAfterSubstitution)) {
+      RewriteViewCommands(
+        SparkSession.active,
+        Option(getMaterializedViewOptions(sqlTextAfterSubstitution)))
+        .apply(delegate.parsePlan(getCreateMaterializedViewStatement(sqlTextAfterSubstitution)))
     } else if (isRefreshMaterializedView(sqlText)) {
       parseRefreshMaterializedView(sqlText)
     } else {
@@ -159,18 +162,20 @@ class IcebergSparkSqlExtensionsParser(delegate: ParserInterface)
   }
 
   private def isCreateMaterializedView(sqlText: String): Boolean = {
-    sqlText.toLowerCase.contains("create materialized view")
+    CREATE_MATERIALIZED_VIEW_PATTERN.findFirstIn(sqlText).isDefined
   }
 
   private def getCreateMaterializedViewStatement(sqlText: String): String = {
     val createViewSql =
-      CREATE_MATERIALIZED_VIEW_PATTERN.replaceAllIn(sqlText, m => m.group(1) + " " + m.group(2))
+      CREATE_MATERIALIZED_VIEW_PATTERN.replaceAllIn(
+        sqlText,
+        m => "CREATE " + Option(m.group(1)).getOrElse("") + "VIEW")
     MATERIALIZED_VIEW_STORED_AS_PATTERN.replaceAllIn(createViewSql, "")
   }
 
   private def getMaterializedViewOptions(sqlText: String): MaterializedViewOptions = {
-    val storedAsPattern = "(?i)STORED AS\\s*'(\\w+)'\\s*".r
-    val storageTableIdentifier = storedAsPattern.findFirstMatchIn(sqlText).map(_.group(1))
+    val storageTableIdentifier =
+      MATERIALIZED_VIEW_STORED_AS_PATTERN.findFirstMatchIn(sqlText).map(_.group(1))
     MaterializedViewOptions(storageTableIdentifier)
   }
 

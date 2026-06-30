@@ -39,25 +39,30 @@ case class DropV2ViewExec(catalog: ViewCatalog, ident: Identifier, ifExists: Boo
     catalog match {
       case sparkCatalog: SparkCatalog =>
         val icebergCatalog = sparkCatalog.icebergCatalog()
-        val icebergViewCatalog = icebergCatalog.asInstanceOf[org.apache.iceberg.catalog.ViewCatalog]
-        var view: Option[View] = None
-        try {
-          val ns = Namespace.of(ident.namespace(): _*)
-          val viewId = TableIdentifier.of(ns, ident.name())
-          view = Some(icebergViewCatalog.loadView(viewId))
-        } catch {
-          case _: exceptions.NoSuchViewException =>
-            if (!ifExists) {
-              throw new NoSuchViewException(ident)
+        icebergCatalog match {
+          case icebergViewCatalog: org.apache.iceberg.catalog.ViewCatalog =>
+            var view: Option[View] = None
+            try {
+              val ns = Namespace.of(ident.namespace(): _*)
+              val viewId = TableIdentifier.of(ns, ident.name())
+              view = Some(icebergViewCatalog.loadView(viewId))
+            } catch {
+              case _: exceptions.NoSuchViewException =>
+                if (!ifExists) {
+                  throw new NoSuchViewException(ident)
+                }
             }
-        }
-        // if view is a materialized view, drop the storage table first
-        view.foreach { v =>
-          val storageTable = v.currentVersion().storageTable()
-          if (storageTable != null) {
-            val storageIdent = Identifier.of(storageTable.namespace().levels(), storageTable.name())
-            sparkCatalog.dropTable(storageIdent)
-          }
+            // if view is a materialized view, drop the storage table first
+            view.foreach { v =>
+              val storageTable = v.currentVersion().storageTable()
+              if (storageTable != null) {
+                val storageIdent =
+                  Identifier.of(storageTable.namespace().levels(), storageTable.name())
+                sparkCatalog.dropTable(storageIdent)
+              }
+            }
+
+          case _ => // underlying catalog does not support Iceberg views
         }
       case _ => // not a SparkCatalog, skip MV cleanup
     }

@@ -110,7 +110,7 @@ case class RefreshMaterializedViewExec(catalog: ViewCatalog, ident: Identifier)
 
     plan.collectLeaves().foreach {
       case r: org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-          if r.catalog.exists(_.name() == sparkCatalog.name()) =>
+          if r.catalog.exists(_.name() == sparkCatalog.name()) && r.identifier.isDefined =>
         val tableIdent = r.identifier.get
         val key = tableIdent.toString
         if (!tables.contains(key)) {
