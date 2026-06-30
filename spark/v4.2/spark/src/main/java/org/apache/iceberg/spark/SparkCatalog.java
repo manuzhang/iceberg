@@ -73,6 +73,7 @@ import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
+import org.apache.spark.sql.connector.catalog.Relation;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -175,6 +176,23 @@ public class SparkCatalog extends BaseCatalog {
   @Override
   public Table loadTable(Identifier ident, long timestampMicros) throws NoSuchTableException {
     return load(ident, TimeTravel.timestampMicros(timestampMicros));
+  }
+
+  @Override
+  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
+    if (!isPathIdentifier(ident) && null != asViewCatalog) {
+      try {
+        org.apache.iceberg.view.View view = asViewCatalog.loadView(buildIdentifier(ident));
+        if (isMaterializedView(view) && isFresh(view)) {
+          Table storageTable = loadStorageTable(view);
+          return new SparkMaterializedView(catalogName, view, storageTable);
+        }
+      } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
+        // Ignore. Just process as a normal relation.
+      }
+    }
+
+    return super.loadRelation(ident);
   }
 
   @Override
@@ -520,12 +538,7 @@ public class SparkCatalog extends BaseCatalog {
     if (null != asViewCatalog) {
       try {
         org.apache.iceberg.view.View icebergView = asViewCatalog.loadView(buildIdentifier(ident));
-        if (isMaterializedView(icebergView) && isFresh(icebergView)) {
-          throw new IllegalStateException(
-              "Materialized view is fresh. loadTable should be attempted instead.");
-        } else {
-          return SparkView.toView(catalogName, icebergView);
-        }
+        return SparkView.toView(catalogName, icebergView);
       } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
         throw new NoSuchViewException(ident);
       }
@@ -857,19 +870,6 @@ public class SparkCatalog extends BaseCatalog {
   private Table load(Identifier ident, TimeTravel timeTravel) throws NoSuchTableException {
     if (isPathIdentifier(ident)) {
       return loadPath((PathIdentifier) ident, timeTravel);
-    }
-
-    // Check if materialized view. If fresh, return the SparkMaterializedView.
-    if (null != asViewCatalog) {
-      try {
-        org.apache.iceberg.view.View view = asViewCatalog.loadView(buildIdentifier(ident));
-        if (isMaterializedView(view) && isFresh(view)) {
-          Table storageTable = loadStorageTable(view);
-          return new SparkMaterializedView(catalogName, view, storageTable);
-        }
-      } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
-        // Ignore. Just process as a normal table.
-      }
     }
 
     try {
