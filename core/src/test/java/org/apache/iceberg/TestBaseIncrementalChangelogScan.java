@@ -248,8 +248,94 @@ public class TestBaseIncrementalChangelogScan
   }
 
   @TestTemplate
+  public void testDeletionVectorOnExistingFile() {
+    assumeThat(formatVersion).isEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).appendFile(FILE_B).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap1.snapshotId()).toSnapshot(snap2.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap2.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.addedDeletes())
+        .as("Must have the added DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+    assertThat(task.existingDeletes()).as("Must have no existing deletes").isEmpty();
+  }
+
+  @TestTemplate
+  public void testAddedFileWithDeletionVectorInSameSnapshot() {
+    assumeThat(formatVersion).isEqualTo(3);
+
+    table.newRowDelta().addRows(FILE_A).addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotInclusive(snap1.snapshotId()).toSnapshot(snap1.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    AddedRowsScanTask task = (AddedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap1.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.deletes())
+        .as("Must have the added DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+  }
+
+  @TestTemplate
+  public void testDeletedFileWithExistingDeletionVector() {
+    assumeThat(formatVersion).isEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).commit();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    table.newDelete().deleteFile(FILE_A).commit();
+
+    Snapshot snap3 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap2.snapshotId()).toSnapshot(snap3.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    DeletedDataFileScanTask task = (DeletedDataFileScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap3.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.existingDeletes())
+        .as("Must have the existing DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+  }
+
+  @TestTemplate
   public void testDeleteFilesAreNotSupported() {
-    assumeThat(formatVersion).isEqualTo(2);
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
 
     table.newFastAppend().appendFile(FILE_A2).appendFile(FILE_B).commit();
 
@@ -257,7 +343,7 @@ public class TestBaseIncrementalChangelogScan
 
     assertThatThrownBy(() -> plan(newScan()))
         .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("Delete files are currently not supported in changelog scans");
+        .hasMessage("Only deletion vectors in v3 tables are supported in changelog scans");
   }
 
   // plans tasks and reorders them to have deterministic order
