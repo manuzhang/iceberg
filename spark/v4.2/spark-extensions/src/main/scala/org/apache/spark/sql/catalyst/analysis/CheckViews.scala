@@ -28,6 +28,8 @@ import org.apache.spark.sql.catalyst.plans.logical.View
 import org.apache.spark.sql.catalyst.plans.logical.views.CreateIcebergView
 import org.apache.spark.sql.catalyst.plans.logical.views.ResolvedV2View
 import org.apache.spark.sql.connector.catalog.ViewCatalog
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.util.SchemaUtils
 
 object CheckViews extends (LogicalPlan => Unit) {
 
@@ -39,6 +41,9 @@ object CheckViews extends (LogicalPlan => Unit) {
         c.child match {
           case resolvedIdent @ ResolvedIdentifier(_: ViewCatalog, _) =>
             verifyColumnCount(resolvedIdent, c.columnAliases, c.query)
+            SchemaUtils.checkColumnNameDuplication(
+              c.query.schema.fieldNames.toIndexedSeq,
+              SQLConf.get.resolver)
             if (c.replace) {
               val viewIdent: Seq[String] =
                 resolvedIdent.catalog.name() +: resolvedIdent.identifier.asMultipartIdentifier

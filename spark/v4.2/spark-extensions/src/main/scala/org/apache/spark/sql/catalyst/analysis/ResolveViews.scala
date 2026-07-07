@@ -37,6 +37,7 @@ import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.sql.connector.catalog.LookupCatalog
 import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.types.MetadataBuilder
 
 case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with LookupCatalog {
 
@@ -62,7 +63,32 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
         .getOrElse(u)
 
     case c: CreateIcebergView if c.query.resolved && !c.rewritten =>
-      c.copy(rewritten = true)
+      val aliased = aliasColumns(c.query, c.columnAliases, c.columnComments)
+      c.copy(
+        query = aliased,
+        queryColumnNames = aliased.schema.fieldNames.toIndexedSeq,
+        rewritten = true)
+  }
+
+  private def aliasColumns(
+      plan: LogicalPlan,
+      columnAliases: Seq[String],
+      columnComments: Seq[Option[String]]): LogicalPlan = {
+    if (columnAliases.isEmpty || columnAliases.length != plan.output.length) {
+      plan
+    } else {
+      val projectList = plan.output.zipWithIndex.map { case (attr, pos) =>
+        columnComments(pos) match {
+          case Some(comment) =>
+            val metadata = new MetadataBuilder().putString("comment", comment).build()
+            Alias(attr, columnAliases(pos))(explicitMetadata = Some(metadata))
+          case None =>
+            Alias(attr, columnAliases(pos))()
+        }
+      }
+
+      Project(projectList, plan)
+    }
   }
 
   private def createViewRelation(
