@@ -956,6 +956,48 @@ project(':iceberg-parquet') {
   }
 }
 
+project(':iceberg-vortex') {
+  test {
+    useJUnitPlatform()
+  }
+  dependencies {
+    api project(':iceberg-api')
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
+    implementation project(':iceberg-core')
+
+    // Compile against the shaded artifact so Vortex APIs use relocated Arrow signatures.
+    compileOnly("${libs.vortex.jni.get().module}:${libs.vortex.jni.get().version}:all") {
+      transitive = false
+    }
+    runtimeOnly("${libs.vortex.jni.get().module}:${libs.vortex.jni.get().version}:all")
+
+    // Vortex scans return Arrow view vectors; compile against the Arrow version that vortex-jni
+    // resolves at runtime while retaining Iceberg's Arrow API surface for consumers.
+    compileOnly libs.arrow.vector19
+    api(libs.arrow.vector) {
+      exclude group: 'io.netty', module: 'netty-buffer'
+      exclude group: 'io.netty', module: 'netty-common'
+      exclude group: 'com.google.code.findbugs', module: 'jsr305'
+    }
+    implementation(libs.arrow.c.data) {
+      exclude group: 'io.netty', module: 'netty-buffer'
+      exclude group: 'io.netty', module: 'netty-common'
+      exclude group: 'com.google.code.findbugs', module: 'jsr305'
+    }
+    implementation libs.arrow.memory.core
+    runtimeOnly libs.netty.buffer
+
+    annotationProcessor libs.immutables.value
+    compileOnly libs.immutables.value
+
+    testImplementation project(path: ':iceberg-api', configuration: 'testArtifacts')
+    testImplementation project(path: ':iceberg-core', configuration: 'testArtifacts')
+    testImplementation project(':iceberg-data')
+    testImplementation libs.junit.jupiter.api
+    testRuntimeOnly libs.protobuf.java4
+  }
+}
+
 project(':iceberg-arrow') {
   test {
     useJUnitPlatform()
