@@ -31,3 +31,5 @@
 /docs/**       export-ignore
 /site          export-ignore
 /site/**       export-ignore
+/spark/v4.3    export-ignore
+/spark/v4.3/** export-ignore

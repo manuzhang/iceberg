@@ -52,7 +52,7 @@ jobs:
           NEXUS_PW: ${{ secrets.NEXUS_PW }}
         run: |
           ./gradlew printVersion
-          ./gradlew -DallModules publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
+          ./gradlew -DallModules -DknownSparkVersions=3.5,4.0,4.1,4.2 publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
           ./gradlew -DflinkVersions= -DsparkVersions=3.5 -DscalaVersion=2.13 -DkafkaVersions= \
             :iceberg-spark:iceberg-spark-3.5_2.13:publishApachePublicationToMavenRepository \
             :iceberg-spark:iceberg-spark-extensions-3.5_2.13:publishApachePublicationToMavenRepository \
