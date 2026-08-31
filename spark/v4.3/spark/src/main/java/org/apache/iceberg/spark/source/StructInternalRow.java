@@ -24,6 +24,7 @@ import java.nio.ByteOrder;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -38,6 +39,7 @@ import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ByteBuffers;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.util.ArrayBasedMapData;
@@ -67,6 +69,7 @@ import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.sql.types.VariantType;
 import org.apache.spark.unsafe.types.BinaryView;
 import org.apache.spark.unsafe.types.CalendarInterval;
+import org.apache.spark.unsafe.types.TimestampNanosVal;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.unsafe.types.VariantVal;
 
@@ -217,6 +220,24 @@ class StructInternalRow extends InternalRow {
   @Override
   public CalendarInterval getInterval(int ordinal) {
     throw new UnsupportedOperationException("Unsupported type: interval");
+  }
+
+  @Override
+  public TimestampNanosVal getTimestampNTZNanos(int ordinal) {
+    LocalDateTime value = struct.get(ordinal, LocalDateTime.class);
+    return timestampNanosVal(DateTimeUtil.nanosFromTimestamp(value));
+  }
+
+  @Override
+  public TimestampNanosVal getTimestampLTZNanos(int ordinal) {
+    OffsetDateTime value = struct.get(ordinal, OffsetDateTime.class);
+    return timestampNanosVal(DateTimeUtil.nanosFromTimestamptz(value));
+  }
+
+  private static TimestampNanosVal timestampNanosVal(long epochNanos) {
+    long epochMicros = Math.floorDiv(epochNanos, 1_000L);
+    short nanosWithinMicro = (short) Math.floorMod(epochNanos, 1_000L);
+    return TimestampNanosVal.fromParts(epochMicros, nanosWithinMicro);
   }
 
   @Override

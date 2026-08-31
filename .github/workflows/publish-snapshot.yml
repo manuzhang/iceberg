@@ -52,5 +52,5 @@ jobs:
           NEXUS_PW: ${{ secrets.NEXUS_PW }}
         run: |
           ./gradlew printVersion
-          ./gradlew -DallModules publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
+          ./gradlew -DallModules -DknownSparkVersions=3.5,4.0,4.1,4.2 publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
           ./gradlew -DflinkVersions= -DsparkVersions=3.5,4.0 -DscalaVersion=2.13 -DkafkaVersions=3 publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"

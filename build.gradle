@@ -109,12 +109,23 @@ if (file("${rootDir}/iceberg-build.properties").exists()) {
 }
 
 def projectVersion = getProjectVersion()
+def spark43VersionRegex = libs.versions.spark43.get().replace(".", "\\.")
 final REVAPI_PROJECTS = ["iceberg-api", "iceberg-core", "iceberg-parquet", "iceberg-orc", "iceberg-common", "iceberg-data"]
 
 allprojects {
   group = "org.apache.iceberg"
   version = projectVersion
   repositories {
+    exclusiveContent {
+      forRepository {
+        maven {
+          url "https://repository.apache.org/content/repositories/orgapachespark-1530/"
+        }
+      }
+      filter {
+        includeVersionByRegex "org.apache.spark", ".*", spark43VersionRegex
+      }
+    }
     mavenCentral()
     mavenLocal()
   }

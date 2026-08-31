@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.analysis.RewriteViewCommands
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.parser.ParameterContext
 import org.apache.spark.sql.catalyst.parser.ParserInterface
+import org.apache.spark.sql.catalyst.parser.SqlStatementSplitResult
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSqlExtensionsParser.NonReservedContext
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSqlExtensionsParser.QuotedIdentifierContext
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -227,6 +228,10 @@ class IcebergSparkSqlExtensionsParser(delegate: ParserInterface)
 
   override def parseQuery(sqlText: String): LogicalPlan = {
     parsePlan(sqlText)
+  }
+
+  override def splitStatements(sqlText: String): SqlStatementSplitResult = {
+    delegate.splitStatements(sqlText)
   }
 }
 

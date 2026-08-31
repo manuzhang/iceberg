@@ -71,6 +71,7 @@ import org.apache.spark.sql.types.GeographyType$;
 import org.apache.spark.sql.types.GeometryType$;
 import org.apache.spark.unsafe.types.BinaryView;
 import org.apache.spark.unsafe.types.CalendarInterval;
+import org.apache.spark.unsafe.types.TimestampNanosVal;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.unsafe.types.VariantVal;
 
@@ -802,6 +803,16 @@ public class SparkParquetReaders {
     @Override
     public CalendarInterval getInterval(int ordinal) {
       return (CalendarInterval) values[ordinal];
+    }
+
+    @Override
+    public TimestampNanosVal getTimestampNTZNanos(int ordinal) {
+      return (TimestampNanosVal) values[ordinal];
+    }
+
+    @Override
+    public TimestampNanosVal getTimestampLTZNanos(int ordinal) {
+      return (TimestampNanosVal) values[ordinal];
     }
 
     @Override
