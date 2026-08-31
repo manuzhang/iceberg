@@ -62,6 +62,7 @@ The full set of changes are listed in [Appendix E](#version-3).
 Version 4 of the Iceberg spec restructures metadata for improved performance and new capabilities:
 
 * Support for [relative locations](#file-locations-in-metadata) in metadata fields
+* Support for [custom data files](#custom-data-files) described by Puffin blobs
 
 The full set of changes are listed in [Appendix E](#version-4).
 
@@ -739,8 +740,8 @@ The `data_file` struct consists of the following fields:
     | _optional_ | _optional_ | _optional_ | **`140  sort_order_id`**          | `int`                                                                       | ID representing sort order for this file [3]. |
     |            |            | _optional_ | **`142  first_row_id`**           | `long`                                                                      | The `_row_id` for the first row in the data file. See [First Row ID Inheritance](#first-row-id-inheritance) |
     |            | _optional_ | _optional_ | **`143  referenced_data_file`**   | `string`                                                                    | Fully qualified location (URI with FS scheme) of a data file that all deletes reference [4] |
-    |            |            | _optional_ | **`144  content_offset`**         | `long`                                                                      | The offset in the file where the content starts [5] |
-    |            |            | _optional_ | **`145  content_size_in_bytes`**  | `long`                                                                      | The length of a referenced content stored in the file; required if `content_offset` is present [5] |
+    |            |            | _optional_ | **`144  content_offset`**         | `long`                                                                      | The offset in the file where referenced Puffin blob content starts [5] |
+    |            |            | _optional_ | **`145  content_size_in_bytes`**  | `long`                                                                      | The length of referenced Puffin blob content; required if `content_offset` is present [5] |
 
 The `partition` struct stores the tuple of partition values for each file. Its type is derived from the partition fields of the partition spec used to write the manifest file. In v2, the partition struct's field ids must match the ids from the partition spec.
 
@@ -752,8 +753,49 @@ Notes:
 2. For `float` and `double`, the value `-0.0` must precede `+0.0`, as in the IEEE 754 `totalOrder` predicate. NaNs are not permitted as lower or upper bounds.
 3. If sort order ID is missing or unknown, then the order is assumed to be unsorted. Only data files and equality delete files should be written with a non-null order id. [Position deletes](#position-delete-files) are required to be sorted by file and position, not a table order, and should set sort order id to null. Readers must ignore sort order id for position delete files.
 4. Position delete metadata can use `referenced_data_file` when all deletes tracked by the entry are in a single data file. Setting the referenced file is required for deletion vectors.
-5. The `content_offset` and `content_size_in_bytes` fields are used to reference a specific blob for direct access to a deletion vector. For deletion vectors, these values are required and must exactly match the `offset` and `length` stored in the Puffin footer for the deletion vector blob.
+5. The `content_offset` and `content_size_in_bytes` fields are used to reference a specific Puffin blob. These values are required for deletion vectors and custom data files and must exactly match the blob's `offset` and `length` stored in the Puffin footer.
 6. The following field ids are reserved on `data_file`: 141.
+
+##### Custom data files
+
+A custom data file uses a Puffin file as a descriptor for data stored in a
+physical format that is not identified directly by the manifest's
+`file_format` field. This provides a standard discovery and lifecycle contract;
+it does not require every Iceberg implementation to support every physical
+format.
+
+Custom data files are supported in format v4 and later and must satisfy the
+following requirements:
+
+- `content` must be `DATA` and `file_format` must be `puffin`.
+- `file_path` must identify the Puffin descriptor file. This path is the data
+  file identity used by snapshots, deletes, and manifest entry uniqueness.
+- `content_offset` and `content_size_in_bytes` must identify the single
+  [`custom-data-file-v1`](puffin-spec.md#custom-data-file-v1-blob-type) blob in
+  the Puffin file.
+- `file_size_in_bytes` must be the total size of the Puffin descriptor file.
+- `record_count`, partition data, metrics, sort order, and row lineage metadata
+  must describe the rows in the referenced physical data file.
+- `split_offsets` must be null. Implementations may use the descriptor's
+  `split-offsets` to split the referenced physical file after resolving the
+  descriptor.
+
+Readers must load the descriptor, resolve the physical format by its `format`
+identifier, resolve its `location` using the table's [path resolution](#path-resolution)
+rules, and read the referenced file. A reader that does not support the
+identified format must fail the scan. It must not skip the file or interpret
+the referenced physical file as Puffin. Readers must preserve the logical row
+order of the referenced file so that row positions and position deletes apply
+to the Puffin data file identity.
+
+The Puffin descriptor and its referenced physical file form one logical data
+file. Writers must finish both files before committing the Puffin path to a
+table. The referenced file must remain immutable and live while any snapshot
+references the Puffin file. Snapshot expiration, orphan-file removal, table
+relocation, and data-file deletion must treat both files as a unit. When a path
+is rewritten, the descriptor's `location` must also be rewritten. Encryption
+metadata in the manifest entry applies to the logical data file and must be
+made available to the physical-format reader.
 
 ##### Field-level Metrics and Statistics
 
@@ -1894,6 +1936,11 @@ The binary single-value serialization can be used to store the lower and upper b
 ### Version 4
 
 Relative path support is added in v4.
+
+Custom data files are added in v4, stored as Puffin files containing a
+`custom-data-file-v1` descriptor blob. Manifest entries track the Puffin file
+and the descriptor's offset and length; the descriptor identifies the physical
+format and referenced data file.
 
 Reading v3 or prior metadata for v4:
 
