@@ -202,10 +202,6 @@ public class SparkCatalog extends BaseCatalog {
     }
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #createTable(Identifier, TableInfo)} instead.
-   */
-  @Deprecated
   @Override
   public Table createTable(
       Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
@@ -231,10 +227,6 @@ public class SparkCatalog extends BaseCatalog {
     }
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #stageCreate(Identifier, TableInfo)} instead.
-   */
-  @Deprecated
   @Override
   public StagedTable stageCreate(
       Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
@@ -260,10 +252,6 @@ public class SparkCatalog extends BaseCatalog {
     }
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #stageReplace(Identifier, TableInfo)} instead.
-   */
-  @Deprecated
   @Override
   public StagedTable stageReplace(
       Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
@@ -289,10 +277,6 @@ public class SparkCatalog extends BaseCatalog {
     }
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #stageCreateOrReplace(Identifier, TableInfo)} instead.
-   */
-  @Deprecated
   @Override
   public StagedTable stageCreateOrReplace(
       Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties) {

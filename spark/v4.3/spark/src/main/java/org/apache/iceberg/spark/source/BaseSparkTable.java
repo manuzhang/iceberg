@@ -94,10 +94,6 @@ abstract class BaseSparkTable
     return table.toString();
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #columns()} instead
-   */
-  @Deprecated
   @Override
   public StructType schema() {
     return sparkSchema();
