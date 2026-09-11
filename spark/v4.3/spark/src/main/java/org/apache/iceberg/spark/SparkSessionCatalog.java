@@ -57,6 +57,8 @@ import org.apache.spark.sql.connector.catalog.TableSummary;
 import org.apache.spark.sql.connector.catalog.View;
 import org.apache.spark.sql.connector.catalog.ViewCatalog;
 import org.apache.spark.sql.connector.catalog.functions.UnboundFunction;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /**
@@ -237,6 +239,13 @@ public class SparkSessionCatalog<
   }
 
   @Override
+  public Table createTable(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws TableAlreadyExistsException, NoSuchNamespaceException {
+    return createTable(ident, Spark3Util.tableInfo(schema, transforms, properties));
+  }
+
+  @Override
   public Table createTable(Identifier ident, TableInfo info)
       throws TableAlreadyExistsException, NoSuchNamespaceException {
     checkViewNotExists(ident);
@@ -248,6 +257,13 @@ public class SparkSessionCatalog<
       // delegate to the session catalog
       return getSessionCatalog().createTable(ident, info);
     }
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws TableAlreadyExistsException, NoSuchNamespaceException {
+    return stageCreate(ident, Spark3Util.tableInfo(schema, transforms, properties));
   }
 
   @Override
@@ -270,6 +286,13 @@ public class SparkSessionCatalog<
     // roll back
     Table table = catalog.createTable(ident, info);
     return new RollbackStagedTable(catalog, ident, table);
+  }
+
+  @Override
+  public StagedTable stageReplace(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws NoSuchNamespaceException, NoSuchTableException {
+    return stageReplace(ident, Spark3Util.tableInfo(schema, transforms, properties));
   }
 
   @Override
@@ -301,6 +324,13 @@ public class SparkSessionCatalog<
       // the table was deleted, but now already exists again. retry the replace.
       return stageReplace(ident, info);
     }
+  }
+
+  @Override
+  public StagedTable stageCreateOrReplace(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws NoSuchNamespaceException {
+    return stageCreateOrReplace(ident, Spark3Util.tableInfo(schema, transforms, properties));
   }
 
   @Override

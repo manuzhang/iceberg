@@ -85,6 +85,8 @@ import org.apache.spark.sql.connector.catalog.TableChange.SetProperty;
 import org.apache.spark.sql.connector.catalog.TableInfo;
 import org.apache.spark.sql.connector.catalog.TableSummary;
 import org.apache.spark.sql.connector.catalog.View;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -201,6 +203,13 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
+  public Table createTable(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws TableAlreadyExistsException, NoSuchNamespaceException {
+    return createTable(ident, Spark3Util.tableInfo(schema, transforms, properties));
+  }
+
+  @Override
   public Table createTable(Identifier ident, TableInfo tableInfo)
       throws TableAlreadyExistsException, NoSuchNamespaceException {
     Schema icebergSchema = SparkSchemaUtil.convertWithDefaults(tableInfo);
@@ -216,6 +225,13 @@ public class SparkCatalog extends BaseCatalog {
     } catch (AlreadyExistsException e) {
       throw new TableAlreadyExistsException(ident);
     }
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws TableAlreadyExistsException {
+    return stageCreate(ident, Spark3Util.tableInfo(schema, transforms, properties));
   }
 
   @Override
@@ -237,6 +253,13 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
+  public StagedTable stageReplace(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties)
+      throws NoSuchTableException {
+    return stageReplace(ident, Spark3Util.tableInfo(schema, transforms, properties));
+  }
+
+  @Override
   public StagedTable stageReplace(Identifier ident, TableInfo tableInfo)
       throws NoSuchTableException {
     Schema icebergSchema = SparkSchemaUtil.convert(tableInfo);
@@ -252,6 +275,12 @@ public class SparkCatalog extends BaseCatalog {
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       throw new NoSuchTableException(ident);
     }
+  }
+
+  @Override
+  public StagedTable stageCreateOrReplace(
+      Identifier ident, StructType schema, Transform[] transforms, Map<String, String> properties) {
+    return stageCreateOrReplace(ident, Spark3Util.tableInfo(schema, transforms, properties));
   }
 
   @Override
