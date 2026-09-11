@@ -71,8 +71,12 @@ project(':open-api').name = 'iceberg-open-api'
 project(':mr').name = 'iceberg-mr'
 
 if (null != System.getProperty("allModules")) {
+  // Preview Spark sources may be excluded from source releases.
+  def availableSparkVersions = System.getProperty("knownSparkVersions").split(",").findAll {
+    file("spark/v${it}/build.gradle").exists()
+  }
   System.setProperty("flinkVersions", System.getProperty("knownFlinkVersions"))
-  System.setProperty("sparkVersions", System.getProperty("knownSparkVersions"))
+  System.setProperty("sparkVersions", availableSparkVersions.join(","))
   System.setProperty("kafkaVersions", System.getProperty("knownKafkaVersions"))
 }
 
