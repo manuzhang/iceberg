@@ -102,10 +102,6 @@ public class RollbackStagedTable
     return table.name();
   }
 
-  /**
-   * @deprecated since 1.12.0, use {@link #columns()} instead
-   */
-  @Deprecated
   @Override
   public StructType schema() {
     return table.schema();
