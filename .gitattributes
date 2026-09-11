@@ -29,3 +29,5 @@
 /examples/**   export-ignore
 /docs          export-ignore
 /docs/**       export-ignore
+/spark/v4.3    export-ignore
+/spark/v4.3/** export-ignore

@@ -71,8 +71,12 @@ project(':open-api').name = 'iceberg-open-api'
 project(':mr').name = 'iceberg-mr'
 
 if (null != System.getProperty("allModules")) {
+  // Preview Spark sources may be excluded from source releases.
+  def availableSparkVersions = System.getProperty("knownSparkVersions").split(",").findAll {
+    file("spark/v${it}/build.gradle").exists()
+  }
   System.setProperty("flinkVersions", System.getProperty("knownFlinkVersions"))
-  System.setProperty("sparkVersions", System.getProperty("knownSparkVersions"))
+  System.setProperty("sparkVersions", availableSparkVersions.join(","))
   System.setProperty("kafkaVersions", System.getProperty("knownKafkaVersions"))
 }
 
@@ -194,6 +198,18 @@ if (sparkVersions.contains("4.2")) {
   project(":iceberg-spark:spark-extensions-4.2_2.13").name = "iceberg-spark-extensions-4.2_2.13"
   project(":iceberg-spark:spark-runtime-4.2_2.13").projectDir = file('spark/v4.2/spark-runtime')
   project(":iceberg-spark:spark-runtime-4.2_2.13").name = "iceberg-spark-runtime-4.2_2.13"
+}
+
+if (sparkVersions.contains("4.3")) {
+  include ":iceberg-spark:spark-4.3_2.13"
+  include ":iceberg-spark:spark-extensions-4.3_2.13"
+  include ":iceberg-spark:spark-runtime-4.3_2.13"
+  project(":iceberg-spark:spark-4.3_2.13").projectDir = file('spark/v4.3/spark')
+  project(":iceberg-spark:spark-4.3_2.13").name = "iceberg-spark-4.3_2.13"
+  project(":iceberg-spark:spark-extensions-4.3_2.13").projectDir = file('spark/v4.3/spark-extensions')
+  project(":iceberg-spark:spark-extensions-4.3_2.13").name = "iceberg-spark-extensions-4.3_2.13"
+  project(":iceberg-spark:spark-runtime-4.3_2.13").projectDir = file('spark/v4.3/spark-runtime')
+  project(":iceberg-spark:spark-runtime-4.3_2.13").name = "iceberg-spark-runtime-4.3_2.13"
 }
 
 if (kafkaVersions.contains("3")) {
