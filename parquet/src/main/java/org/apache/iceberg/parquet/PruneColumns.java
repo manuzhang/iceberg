@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.parquet;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import org.apache.iceberg.relocated.com.google.common.base.Objects;
@@ -60,7 +59,10 @@ class PruneColumns extends TypeWithSchemaVisitor<Type> {
         } else {
           if (isStruct(originalField, expected.field(fieldId))) {
             hasChange = true;
-            builder.addField(originalField.asGroupType().withNewFields(Collections.emptyList()));
+            // Preserve parent definition levels even when all projected children are missing.
+            GroupType struct = originalField.asGroupType();
+            builder.addField(
+                struct.getFieldCount() == 0 ? struct : struct.withNewFields(struct.getType(0)));
           } else {
             builder.addField(originalField);
           }

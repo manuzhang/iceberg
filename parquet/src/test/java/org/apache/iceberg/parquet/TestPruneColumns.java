@@ -268,7 +268,14 @@ public class TestPruneColumns {
                             .named("z"))
                     .id(2)
                     .named("struct_name_1"))
-            .addField(Types.buildGroup(Type.Repetition.OPTIONAL).id(6).named("struct_name_2"))
+            .addField(
+                Types.buildGroup(Type.Repetition.OPTIONAL)
+                    .addField(
+                        Types.primitive(PrimitiveTypeName.DOUBLE, Type.Repetition.REQUIRED)
+                            .id(7)
+                            .named("x"))
+                    .id(6)
+                    .named("struct_name_2"))
             .named("table");
 
     MessageType actual = ParquetSchemaUtil.pruneColumns(fileSchema, projection);

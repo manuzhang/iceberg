@@ -42,6 +42,7 @@ import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkUtil;
+import org.apache.iceberg.spark.data.vectorized.NestedParquetReaders;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.PropertyUtil;
@@ -154,8 +155,7 @@ class SparkBatch implements Batch {
 
   // conditions for using Parquet batch reads:
   // - Parquet vectorization is enabled
-  // - only primitives, unshredded variant, or metadata columns are projected, excluding geometry
-  //   and geography which are primitives with no Arrow vector yet
+  // - projected columns are supported primitives, nested types, unshredded variant, or metadata
   // - all tasks are of FileScanTask type and read only Parquet files
   private boolean useParquetBatchReads() {
     return readConf.parquetVectorizationEnabled()
@@ -218,7 +218,7 @@ class SparkBatch implements Batch {
       }
     }
 
-    return type.isPrimitiveType() || type.isVariantType();
+    return type.isPrimitiveType() || type.isVariantType() || NestedParquetReaders.supports(field);
   }
 
   // conditions for using ORC batch reads:
