@@ -25,7 +25,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +40,7 @@ import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.parquet.Parquet;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.data.AvroDataTestBase;
 import org.apache.iceberg.spark.data.SparkParquetReaders;
@@ -172,7 +172,7 @@ class TestNestedParquetReaders extends AvroDataTestBase {
 
   @Test
   void wideThreeLevelSchema() throws IOException {
-    List<Types.NestedField> fields = new ArrayList<>();
+    List<Types.NestedField> fields = Lists.newArrayList();
     for (int i = 0; i < 1200; i++) {
       fields.add(optional(10 + i, "field_" + i, Types.IntegerType.get()));
     }

@@ -22,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
@@ -43,6 +42,7 @@ import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.mapping.MappingUtil;
 import org.apache.iceberg.parquet.Parquet;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkSQLProperties;
@@ -105,8 +105,8 @@ public class TestParquetVectorizedScan extends TestParquetScan {
                             original.findField("events.element.value").fieldId(),
                             "renamed_value",
                             Types.LongType.get())))));
-    List<String> labels = new ArrayList<>();
-    List<Long> values = new ArrayList<>();
+    List<String> labels = Lists.newArrayList();
+    List<Long> values = Lists.newArrayList();
     try (CloseableIterable<ColumnarBatch> batches =
         Parquet.read(Files.localInput(files[0]))
             .project(projection)
@@ -183,7 +183,7 @@ public class TestParquetVectorizedScan extends TestParquetScan {
             equalitySchema);
     table.newRowDelta().addDeletes(positions).addDeletes(equalities).commit();
 
-    List<CombinedScanTask> tasks = new ArrayList<>();
+    List<CombinedScanTask> tasks = Lists.newArrayList();
     try (CloseableIterable<CombinedScanTask> planned = table.newScan().planTasks()) {
       planned.forEach(tasks::add);
     }

@@ -20,12 +20,12 @@ package org.apache.spark.sql.execution.datasources.parquet;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.parquet.VectorizedReader;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
@@ -51,8 +51,8 @@ import scala.Option;
  */
 public class IcebergNestedParquetReader implements VectorizedReader<ColumnarBatch> {
   private final ParquetColumn schema;
-  private final List<ParquetColumnVector> columns = new ArrayList<>();
-  private final List<ParquetColumnVector> leaves = new ArrayList<>();
+  private final List<ParquetColumnVector> columns = Lists.newArrayList();
+  private final List<ParquetColumnVector> leaves = Lists.newArrayList();
   private int batchSize = 4096;
   private boolean initialized;
 
@@ -71,7 +71,7 @@ public class IcebergNestedParquetReader implements VectorizedReader<ColumnarBatc
         // Spark has no UUID logical type. The output projection converts the bytes to a string.
       case UUID -> DataTypes.BinaryType;
       case STRUCT -> {
-        List<StructField> fields = new ArrayList<>();
+        List<StructField> fields = Lists.newArrayList();
         for (Types.NestedField field : type.asStructType().fields()) {
           fields.add(
               DataTypes.createStructField(

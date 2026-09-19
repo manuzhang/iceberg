@@ -18,13 +18,13 @@
  */
 package org.apache.iceberg.spark.data.vectorized;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.parquet.VectorizedReader;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
 import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
@@ -88,7 +88,7 @@ public class NestedParquetReaders {
   private static Type project(Type physical, Types.NestedField expected) {
     if (expected.type().isStructType()) {
       GroupType group = physical.asGroupType();
-      List<Type> fields = new ArrayList<>();
+      List<Type> fields = Lists.newArrayList();
       // Keep physical order; output order is handled by NestedColumnVector.
       for (Type child : group.getFields()) {
         Types.NestedField selected =
@@ -127,7 +127,7 @@ public class NestedParquetReaders {
     }
 
     GroupType group = type.asGroupType();
-    List<Type> fields = new ArrayList<>();
+    List<Type> fields = Lists.newArrayList();
     for (Type child : group.getFields()) {
       Type readableChild = readable(child);
       if (readableChild != null) {
@@ -153,8 +153,8 @@ public class NestedParquetReaders {
       this.primitiveIndices = new int[expected.columns().size()];
       this.nestedIndices = new int[expected.columns().size()];
       this.parquetTypes = new Type[expected.columns().size()];
-      List<Types.NestedField> primitiveFields = new ArrayList<>();
-      List<Type> nestedFields = new ArrayList<>();
+      List<Types.NestedField> primitiveFields = Lists.newArrayList();
+      List<Type> nestedFields = Lists.newArrayList();
       MessageType pruned = ParquetSchemaUtil.pruneColumns(fileSchema, expected);
       int[] fileIndices = NestedColumnVector.fieldIndices(pruned, expected.columns());
       for (int i = 0; i < expected.columns().size(); i++) {

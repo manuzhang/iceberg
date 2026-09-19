@@ -18,12 +18,12 @@
  */
 package org.apache.iceberg.spark.data.vectorized;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Types;
@@ -74,21 +74,10 @@ class NestedColumnVector extends ColumnVector {
         vector != null || field.type().isStructType(),
         "Missing vector for field: %s",
         field.name());
-    List<ColumnVector> children = new ArrayList<>();
+    List<ColumnVector> children = Lists.newArrayList();
     if (field.type().isStructType()) {
-      GroupType group = parquet.asGroupType();
-      List<Types.NestedField> fields = field.type().asStructType().fields();
-      int[] indices = fieldIndices(group, fields);
-      for (int i = 0; i < fields.size(); i++) {
-        Types.NestedField child = fields.get(i);
-        int index = indices[i];
-        Type childType = index < 0 ? null : group.getType(index);
-        WritableColumnVector childVector =
-            vector == null || childType == null || isEmpty(childType)
-                ? null
-                : vector.getChild(readIndex(group, index));
-        children.add(project(child, childType, childVector, batchSize));
-      }
+      children.addAll(
+          structChildren(field.type().asStructType(), parquet.asGroupType(), vector, batchSize));
     } else if (field.type().isListType()) {
       children.add(
           project(
@@ -114,6 +103,29 @@ class NestedColumnVector extends ColumnVector {
         field.type().equals(Types.UUIDType.get()));
   }
 
+  private static List<ColumnVector> structChildren(
+      Types.StructType expected, GroupType group, WritableColumnVector vector, int batchSize) {
+    List<Types.NestedField> fields = expected.fields();
+    int[] indices = fieldIndices(group, fields);
+    List<ColumnVector> children = Lists.newArrayList();
+    for (int i = 0; i < fields.size(); i++) {
+      Type childType = indices[i] < 0 ? null : group.getType(indices[i]);
+      children.add(
+          project(fields.get(i), childType, childVector(group, indices[i], vector), batchSize));
+    }
+
+    return children;
+  }
+
+  private static WritableColumnVector childVector(
+      GroupType group, int index, WritableColumnVector vector) {
+    if (vector == null || index < 0 || isEmpty(group.getType(index))) {
+      return null;
+    }
+
+    return vector.getChild(readIndex(group, index));
+  }
+
   static boolean isEmpty(Type type) {
     return !type.isPrimitive()
         && type.asGroupType().getFields().stream().allMatch(NestedColumnVector::isEmpty);
@@ -131,7 +143,7 @@ class NestedColumnVector extends ColumnVector {
   }
 
   static int[] fieldIndices(GroupType group, List<Types.NestedField> fields) {
-    Map<Integer, Integer> byId = new HashMap<>();
+    Map<Integer, Integer> byId = Maps.newHashMap();
     for (int i = 0; i < group.getFieldCount(); i++) {
       Type candidate = group.getType(i);
       if (candidate.getId() != null) {
