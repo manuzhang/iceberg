@@ -83,6 +83,8 @@ public class NestedParquetReaders {
         && !constants.containsKey(field.fieldId());
   }
 
+  // The physical type comes from ParquetSchemaUtil.pruneColumns, which also determines the columns
+  // loaded for each row group, so every column requested here is available.
   private static Type project(Type physical, Types.NestedField expected) {
     if (expected.type().isStructType()) {
       GroupType group = physical.asGroupType();
@@ -97,12 +99,9 @@ public class NestedParquetReaders {
           fields.add(project(child, selected));
         }
       }
-      // A physical leaf is necessary to distinguish a null parent from a non-null parent
-      // when every projected child was added after the file was written.
-      if (fields.isEmpty() && group.getFieldCount() > 0) {
-        fields.add(group.getType(0));
-      }
-      return group.withNewFields(fields);
+      // When every projected child is missing from the file, pruning keeps only the leaf that
+      // shows whether the struct is null, or nothing if the struct can never be null.
+      return fields.isEmpty() ? group : group.withNewFields(fields);
     } else if (expected.type().isListType()) {
       GroupType group = physical.asGroupType();
       Type element = ParquetSchemaUtil.determineListElementType(group);
@@ -121,9 +120,26 @@ public class NestedParquetReaders {
     return physical;
   }
 
+  // Drops structs with no columns to read; NestedColumnVector reads them as always present.
+  private static Type readable(Type type) {
+    if (type.isPrimitive()) {
+      return type;
+    }
+
+    GroupType group = type.asGroupType();
+    List<Type> fields = new ArrayList<>();
+    for (Type child : group.getFields()) {
+      Type readableChild = readable(child);
+      if (readableChild != null) {
+        fields.add(readableChild);
+      }
+    }
+    return fields.isEmpty() ? null : group.withNewFields(fields);
+  }
+
   private static class Reader implements VectorizedReader<ColumnarBatch> {
     private final Schema expected;
-    private final MessageType nestedSchema;
+    private final Type[] parquetTypes;
     private final VectorizedReader<ColumnarBatch> primitives;
     private final IcebergNestedParquetReader nested;
     private final int[] primitiveIndices;
@@ -136,9 +152,11 @@ public class NestedParquetReaders {
       this.expected = expected;
       this.primitiveIndices = new int[expected.columns().size()];
       this.nestedIndices = new int[expected.columns().size()];
+      this.parquetTypes = new Type[expected.columns().size()];
       List<Types.NestedField> primitiveFields = new ArrayList<>();
       List<Type> nestedFields = new ArrayList<>();
-      int[] fileIndices = NestedColumnVector.fieldIndices(fileSchema, expected.columns());
+      MessageType pruned = ParquetSchemaUtil.pruneColumns(fileSchema, expected);
+      int[] fileIndices = NestedColumnVector.fieldIndices(pruned, expected.columns());
       for (int i = 0; i < expected.columns().size(); i++) {
         Types.NestedField field = expected.columns().get(i);
         primitiveIndices[i] = -1;
@@ -146,16 +164,20 @@ public class NestedParquetReaders {
         if (isNested(field, constants)) {
           int index = fileIndices[i];
           if (index >= 0) {
-            nestedIndices[i] = nestedFields.size();
-            nestedFields.add(project(fileSchema.getType(index), field));
+            parquetTypes[i] = project(pruned.getType(index), field);
+            Type readable = readable(parquetTypes[i]);
+            if (readable != null) {
+              nestedIndices[i] = nestedFields.size();
+              nestedFields.add(readable);
+            }
           }
         } else {
           primitiveIndices[i] = primitiveFields.size();
           primitiveFields.add(field);
         }
       }
-      this.nestedSchema = new MessageType(fileSchema.getName(), nestedFields);
-      this.nested = new IcebergNestedParquetReader(nestedSchema);
+      this.nested =
+          new IcebergNestedParquetReader(new MessageType(fileSchema.getName(), nestedFields));
       this.primitives =
           primitiveFields.isEmpty()
               ? null
@@ -195,7 +217,7 @@ public class NestedParquetReaders {
             projected[i] =
                 NestedColumnVector.project(
                     expected.columns().get(i),
-                    index < 0 ? null : nestedSchema.getType(index),
+                    parquetTypes[i],
                     index < 0 ? null : (WritableColumnVector) nestedBatch.column(index),
                     batchSize);
           }

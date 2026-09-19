@@ -117,6 +117,15 @@ public class SparkReadConf {
         .parse();
   }
 
+  public boolean parquetNestedVectorizationEnabled() {
+    return confParser
+        .booleanConf()
+        .option(SparkReadOptions.PARQUET_NESTED_VECTORIZATION_ENABLED)
+        .sessionConf(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED)
+        .defaultValue(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED_DEFAULT)
+        .parse();
+  }
+
   public int parquetBatchSize() {
     return confParser
         .intConf()

@@ -252,6 +252,82 @@ class TestNestedParquetReaders extends AvroDataTestBase {
   }
 
   @Test
+  void missingChildrenAfterNestedFirstChild() throws IOException {
+    Schema schema =
+        new Schema(
+            optional(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(
+                        2,
+                        "inner",
+                        Types.StructType.of(
+                            optional(3, "x", Types.IntegerType.get()),
+                            optional(4, "y", Types.StringType.get()))),
+                    optional(5, "b", Types.LongType.get()))));
+    writeAndValidate(schema, projectAddedChild(schema));
+  }
+
+  @Test
+  void missingChildrenAfterListFirstChild() throws IOException {
+    Schema schema =
+        new Schema(
+            optional(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(2, "tags", Types.ListType.ofOptional(3, Types.IntegerType.get())),
+                    optional(4, "b", Types.LongType.get()))));
+    writeAndValidate(schema, projectAddedChild(schema));
+  }
+
+  @Test
+  void missingChildrenOfRequiredStruct() throws IOException {
+    Schema schema =
+        new Schema(
+            required(1, "parent", Types.StructType.of(optional(2, "a", Types.IntegerType.get()))));
+    writeAndValidate(schema, projectAddedChild(schema));
+  }
+
+  @Test
+  void missingChildrenOfRequiredNestedStruct() throws IOException {
+    Schema schema =
+        new Schema(
+            required(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(2, "a", Types.IntegerType.get()),
+                    required(
+                        3,
+                        "child",
+                        Types.StructType.of(optional(4, "x", Types.IntegerType.get()))))));
+    Schema expected =
+        new Schema(
+            required(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(2, "a", Types.IntegerType.get()),
+                    required(
+                        3,
+                        "child",
+                        Types.StructType.of(optional(100, "added", Types.StringType.get()))))));
+    writeAndValidate(schema, expected);
+  }
+
+  private static Schema projectAddedChild(Schema schema) {
+    Types.NestedField parent = schema.findField("parent");
+    return new Schema(
+        Types.NestedField.of(
+            parent.fieldId(),
+            parent.isOptional(),
+            parent.name(),
+            Types.StructType.of(optional(100, "added", Types.StringType.get()))));
+  }
+
+  @Test
   @Override
   public void testUnknownListType() {
     assertThatThrownBy(super::testUnknownListType)

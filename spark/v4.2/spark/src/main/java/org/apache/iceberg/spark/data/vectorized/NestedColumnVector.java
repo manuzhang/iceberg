@@ -40,7 +40,12 @@ import org.apache.spark.sql.vectorized.ColumnarArray;
 import org.apache.spark.sql.vectorized.ColumnarMap;
 import org.apache.spark.unsafe.types.UTF8String;
 
-/** Projects decoded nested vectors by Iceberg field ID without copying their values. */
+/**
+ * Projects decoded nested vectors by Iceberg field ID without copying their values.
+ *
+ * <p>A struct without a decoded vector has no columns to read because it can never be null; it is
+ * always present and its children are read as missing.
+ */
 class NestedColumnVector extends ColumnVector {
   private final WritableColumnVector delegate;
   private final ColumnVector[] children;
@@ -65,6 +70,10 @@ class NestedColumnVector extends ColumnVector {
           field.type(), batchSize, SparkUtil.internalToSpark(field.type(), field.initialDefault()));
     }
 
+    Preconditions.checkArgument(
+        vector != null || field.type().isStructType(),
+        "Missing vector for field: %s",
+        field.name());
     List<ColumnVector> children = new ArrayList<>();
     if (field.type().isStructType()) {
       GroupType group = parquet.asGroupType();
@@ -73,12 +82,12 @@ class NestedColumnVector extends ColumnVector {
       for (int i = 0; i < fields.size(); i++) {
         Types.NestedField child = fields.get(i);
         int index = indices[i];
-        children.add(
-            project(
-                child,
-                index < 0 ? null : group.getType(index),
-                index < 0 ? null : vector.getChild(index),
-                batchSize));
+        Type childType = index < 0 ? null : group.getType(index);
+        WritableColumnVector childVector =
+            vector == null || childType == null || isEmpty(childType)
+                ? null
+                : vector.getChild(readIndex(group, index));
+        children.add(project(child, childType, childVector, batchSize));
       }
     } else if (field.type().isListType()) {
       children.add(
@@ -105,6 +114,22 @@ class NestedColumnVector extends ColumnVector {
         field.type().equals(Types.UUIDType.get()));
   }
 
+  static boolean isEmpty(Type type) {
+    return !type.isPrimitive()
+        && type.asGroupType().getFields().stream().allMatch(NestedColumnVector::isEmpty);
+  }
+
+  // Empty structs are not decoded, so they do not have child vectors.
+  private static int readIndex(GroupType group, int index) {
+    int readIndex = 0;
+    for (int i = 0; i < index; i++) {
+      if (!isEmpty(group.getType(i))) {
+        readIndex += 1;
+      }
+    }
+    return readIndex;
+  }
+
   static int[] fieldIndices(GroupType group, List<Types.NestedField> fields) {
     Map<Integer, Integer> byId = new HashMap<>();
     for (int i = 0; i < group.getFieldCount(); i++) {
@@ -128,17 +153,17 @@ class NestedColumnVector extends ColumnVector {
 
   @Override
   public boolean hasNull() {
-    return delegate.hasNull();
+    return delegate != null && delegate.hasNull();
   }
 
   @Override
   public int numNulls() {
-    return delegate.numNulls();
+    return delegate == null ? 0 : delegate.numNulls();
   }
 
   @Override
   public boolean isNullAt(int rowId) {
-    return delegate.isNullAt(rowId);
+    return delegate != null && delegate.isNullAt(rowId);
   }
 
   @Override

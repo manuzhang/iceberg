@@ -155,7 +155,8 @@ class SparkBatch implements Batch {
 
   // conditions for using Parquet batch reads:
   // - Parquet vectorization is enabled
-  // - projected columns are supported primitives, nested types, unshredded variant, or metadata
+  // - projected columns are supported primitives, unshredded variant, or metadata, or nested
+  //   types when nested vectorization is enabled
   // - all tasks are of FileScanTask type and read only Parquet files
   private boolean useParquetBatchReads() {
     return readConf.parquetVectorizationEnabled()
@@ -218,7 +219,11 @@ class SparkBatch implements Batch {
       }
     }
 
-    return type.isPrimitiveType() || type.isVariantType() || NestedParquetReaders.supports(field);
+    if (type.isNestedType()) {
+      return readConf.parquetNestedVectorizationEnabled() && NestedParquetReaders.supports(field);
+    }
+
+    return type.isPrimitiveType() || type.isVariantType();
   }
 
   // conditions for using ORC batch reads:

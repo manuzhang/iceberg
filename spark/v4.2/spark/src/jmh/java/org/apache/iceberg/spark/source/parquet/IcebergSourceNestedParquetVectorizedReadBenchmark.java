@@ -162,6 +162,7 @@ public class IcebergSourceNestedParquetVectorizedReadBenchmark extends IcebergSo
         .read()
         .format("iceberg")
         .option(SparkReadOptions.VECTORIZATION_ENABLED, Boolean.toString(vectorized))
+        .option(SparkReadOptions.PARQUET_NESTED_VECTORIZATION_ENABLED, "true")
         .load(table().location());
   }
 

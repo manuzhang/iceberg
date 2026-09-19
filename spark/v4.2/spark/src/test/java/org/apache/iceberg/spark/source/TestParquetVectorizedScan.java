@@ -45,6 +45,7 @@ import org.apache.iceberg.mapping.MappingUtil;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkReadOptions;
+import org.apache.iceberg.spark.SparkSQLProperties;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.data.vectorized.NestedParquetReaders;
 import org.apache.iceberg.types.Types;
@@ -52,6 +53,8 @@ import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -61,6 +64,16 @@ public class TestParquetVectorizedScan extends TestParquetScan {
   @Override
   protected boolean vectorized() {
     return true;
+  }
+
+  @BeforeEach
+  void enableNestedVectorization() {
+    spark.conf().set(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED, "true");
+  }
+
+  @AfterEach
+  void resetNestedVectorization() {
+    spark.conf().unset(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED);
   }
 
   @Test
@@ -174,17 +187,13 @@ public class TestParquetVectorizedScan extends TestParquetScan {
     try (CloseableIterable<CombinedScanTask> planned = table.newScan().planTasks()) {
       planned.forEach(tasks::add);
     }
-    SparkBatch batch =
-        new SparkBatch(
-            sc,
-            table,
-            table::io,
-            new SparkReadConf(spark, table),
-            Types.StructType.of(),
-            tasks,
-            table.schema().select("data", "labels"),
-            0);
-    assertThat(batch.createReaderFactory()).isInstanceOf(SparkColumnarReaderFactory.class);
+    assertThat(sparkBatch(table, tasks).createReaderFactory())
+        .isInstanceOf(SparkColumnarReaderFactory.class);
+    spark.conf().unset(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED);
+    assertThat(sparkBatch(table, tasks).createReaderFactory())
+        .as("Nested vectorization is disabled by default")
+        .isInstanceOf(SparkRowReaderFactory.class);
+    spark.conf().set(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED, "true");
 
     List<Row> expected =
         spark
@@ -219,5 +228,17 @@ public class TestParquetVectorizedScan extends TestParquetScan {
             .select("data", MetadataColumns.IS_DELETED.name(), MetadataColumns.ROW_POSITION.name())
             .collectAsList();
     assertThat(actualMarked).containsExactlyInAnyOrderElementsOf(expectedMarked);
+  }
+
+  private SparkBatch sparkBatch(Table table, List<CombinedScanTask> tasks) {
+    return new SparkBatch(
+        sc,
+        table,
+        table::io,
+        new SparkReadConf(spark, table),
+        Types.StructType.of(),
+        tasks,
+        table.schema().select("data", "labels"),
+        0);
   }
 }
