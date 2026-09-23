@@ -125,7 +125,8 @@ class ConstantColumnVector extends ColumnVector {
   @Override
   public ColumnVector getChild(int ordinal) {
     InternalRow constantAsRow = (InternalRow) constant;
-    Object childConstant = constantAsRow.get(ordinal, childType(ordinal));
+    Object childConstant =
+        constantAsRow == null ? null : constantAsRow.get(ordinal, childType(ordinal));
     return new ConstantColumnVector(childIcebergType(ordinal), batchSize, childConstant);
   }
 

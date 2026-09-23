@@ -30,8 +30,8 @@ import org.apache.iceberg.spark.data.SparkOrcWriter;
 import org.apache.iceberg.spark.data.SparkParquetReaders;
 import org.apache.iceberg.spark.data.SparkParquetWriters;
 import org.apache.iceberg.spark.data.SparkPlannedAvroReader;
+import org.apache.iceberg.spark.data.vectorized.NestedParquetReaders;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkOrcReaders;
-import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
@@ -62,8 +62,7 @@ public class SparkFormatModels {
             ColumnarBatch.class,
             StructType.class,
             (icebergSchema, fileSchema, engineSchema, idToConstant) ->
-                VectorizedSparkParquetReaders.buildReader(
-                    icebergSchema, fileSchema, idToConstant)));
+                NestedParquetReaders.buildReader(icebergSchema, fileSchema, idToConstant)));
 
     FormatModelRegistry.register(
         ORCFormatModel.create(

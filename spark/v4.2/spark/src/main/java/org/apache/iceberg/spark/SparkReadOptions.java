@@ -59,6 +59,10 @@ public class SparkReadOptions {
   // Overrides table's vectorization enabled properties
   public static final String VECTORIZATION_ENABLED = "vectorization-enabled";
 
+  // Enables Parquet vectorized reads for nested (struct, list, map) columns
+  public static final String PARQUET_NESTED_VECTORIZATION_ENABLED =
+      "parquet-nested-vectorization-enabled";
+
   // Overrides the table's read.parquet.vectorization.batch-size
   public static final String VECTORIZATION_BATCH_SIZE = "batch-size";
 

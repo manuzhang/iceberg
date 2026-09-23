@@ -27,6 +27,11 @@ public class SparkSQLProperties {
   // Controls whether vectorized reads are enabled
   public static final String VECTORIZATION_ENABLED = "spark.sql.iceberg.vectorization.enabled";
 
+  // Controls whether Parquet vectorized reads are used for nested (struct, list, map) columns
+  public static final String PARQUET_NESTED_VECTORIZATION_ENABLED =
+      "spark.sql.iceberg.parquet.nested-vectorization.enabled";
+  public static final boolean PARQUET_NESTED_VECTORIZATION_ENABLED_DEFAULT = false;
+
   // Controls whether to perform the nullability check during writes
   public static final String CHECK_NULLABILITY = "spark.sql.iceberg.check-nullability";
   public static final boolean CHECK_NULLABILITY_DEFAULT = true;
