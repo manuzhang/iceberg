@@ -18,6 +18,10 @@
  */
 package org.apache.iceberg.spark.extensions;
 
+import static org.apache.iceberg.TableProperties.DELETE_MODE;
+import static org.apache.iceberg.TableProperties.FORMAT_VERSION;
+import static org.apache.iceberg.TableProperties.MERGE_MODE;
+import static org.apache.iceberg.TableProperties.UPDATE_MODE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,10 +30,12 @@ import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.iceberg.ChangelogOperation;
 import org.apache.iceberg.ParameterizedTestExtension;
+import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.spark.SparkReadOptions;
+import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.spark.sql.types.StructField;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.TestTemplate;
@@ -60,6 +66,96 @@ public class TestCreateChangelogViewProcedure extends ExtensionsTestBase {
   private void createTableWithIdentifierField() {
     sql("CREATE TABLE %s (id INT NOT NULL, data STRING) USING iceberg", tableName);
     sql("ALTER TABLE %s SET IDENTIFIER FIELDS id", tableName);
+  }
+
+  private void createV3TableWithMergeOnReadWrites() {
+    sql(
+        "CREATE TABLE %s (id INT NOT NULL, data STRING) USING iceberg "
+            + "TBLPROPERTIES ('%s' = '3', '%s' = '%s', '%s' = '%s', '%s' = '%s')",
+        tableName,
+        FORMAT_VERSION,
+        DELETE_MODE,
+        RowLevelOperationMode.MERGE_ON_READ.modeName(),
+        UPDATE_MODE,
+        RowLevelOperationMode.MERGE_ON_READ.modeName(),
+        MERGE_MODE,
+        RowLevelOperationMode.MERGE_ON_READ.modeName());
+    sql("ALTER TABLE %s SET IDENTIFIER FIELDS id", tableName);
+  }
+
+  @TestTemplate
+  public void mergeOnReadUpdateWithDeletionVectors() {
+    createV3TableWithMergeOnReadWrites();
+
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+    Snapshot snap1 = table.currentSnapshot();
+
+    sql("UPDATE %s SET data = 'c' WHERE id = 2", tableName);
+    table.refresh();
+    Snapshot snap2 = table.currentSnapshot();
+    assertThat(snap2.addedDeleteFiles(table.io())).allMatch(ContentFileUtil::isDV);
+
+    List<Object[]> returns =
+        sql(
+            "CALL %s.system.create_changelog_view(table => '%s', compute_updates => true)",
+            catalogName, tableName);
+
+    String viewName = (String) returns.get(0)[0];
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(
+            row(1, "a", INSERT, 0, snap1.snapshotId()),
+            row(2, "b", INSERT, 0, snap1.snapshotId()),
+            row(2, "b", UPDATE_BEFORE, 1, snap2.snapshotId()),
+            row(2, "c", UPDATE_AFTER, 1, snap2.snapshotId())),
+        sql("select * from %s order by _change_ordinal, id, data", viewName));
+  }
+
+  @TestTemplate
+  public void mergeOnReadDeleteWithDeletionVectors() {
+    createV3TableWithMergeOnReadWrites();
+
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+    Snapshot snap1 = table.currentSnapshot();
+
+    sql("DELETE FROM %s WHERE id = 2", tableName);
+    table.refresh();
+    Snapshot snap2 = table.currentSnapshot();
+
+    List<Object[]> returns =
+        sql(
+            "CALL %s.system.create_changelog_view(table => '%s', options => map('%s', '%s'))",
+            catalogName, tableName, SparkReadOptions.START_SNAPSHOT_ID, snap1.snapshotId());
+
+    String viewName = (String) returns.get(0)[0];
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(2, "b", DELETE, 0, snap2.snapshotId())),
+        sql("select * from %s order by _change_ordinal, id, data", viewName));
+  }
+
+  @TestTemplate
+  public void mergeOnReadNetChangesWithDeletionVectors() {
+    createV3TableWithMergeOnReadWrites();
+
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+    sql("DELETE FROM %s WHERE id = 2", tableName);
+    sql("UPDATE %s SET data = 'c' WHERE id = 1", tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+    Snapshot snap3 = table.currentSnapshot();
+
+    List<Object[]> returns =
+        sql(
+            "CALL %s.system.create_changelog_view(table => '%s', net_changes => true)",
+            catalogName, tableName);
+
+    String viewName = (String) returns.get(0)[0];
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(1, "c", INSERT, 2, snap3.snapshotId())),
+        sql("select * from %s order by _change_ordinal, id, data", viewName));
   }
 
   @TestTemplate
