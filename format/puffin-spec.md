@@ -179,6 +179,54 @@ for Puffin v1.
 [roaring-bitmap-portable-serialization]: https://github.com/RoaringBitmap/RoaringFormatSpec?tab=readme-ov-file#extension-for-64-bit-implementations
 [roaring-bitmap-general-layout]: https://github.com/RoaringBitmap/RoaringFormatSpec?tab=readme-ov-file#general-layout
 
+#### `custom-data-file-v1` blob type
+
+A descriptor for an Iceberg data file whose physical encoding is identified by
+a format name rather than by the manifest's `file_format` field. The manifest
+tracks the containing Puffin file as the data file and points to the descriptor
+blob using `content_offset` and `content_size_in_bytes`. The physical data is
+stored in the referenced file.
+
+The blob contents are a UTF-8 encoded JSON object with the following fields:
+
+| Field Name          | Field Type                              | Required | Description |
+|---------------------|-----------------------------------------|----------|-------------|
+| format              | JSON string                             | yes      | Lowercase identifier for the physical data format |
+| location            | JSON string                             | yes      | Location of the referenced physical data file, interpreted using Iceberg's version-specific path rules |
+| file-size-in-bytes  | JSON long                               | yes      | Total size of the referenced physical data file |
+| split-offsets       | JSON list of longs                      | no       | Recommended split offsets in the referenced physical data file, sorted ascending |
+| properties          | JSON object with string property values | no       | Format-specific metadata needed to read the referenced physical data file |
+
+Format identifiers must start with an ASCII lowercase letter and contain only
+ASCII lowercase letters, digits, hyphens, underscores, and dots. The identifier
+`puffin` is reserved and must not be used. Format identifiers are stable: an
+identifier must not be reused for an incompatible physical encoding.
+
+`file-size-in-bytes` must be non-negative. Each `split-offsets` value must be
+non-negative, less than `file-size-in-bytes`, and greater than the previous
+value. `location` must not identify the containing Puffin file. Readers must
+ignore unrecognized descriptor fields.
+
+For example, a descriptor for a Vortex file may contain:
+
+```json
+{
+  "format": "vortex",
+  "location": "s3://bucket/table/data/00001.vortex",
+  "file-size-in-bytes": 1048576,
+  "split-offsets": [0, 524288]
+}
+```
+
+The blob's `fields` list must be empty because the descriptor applies to the
+entire data file. `snapshot-id` and `sequence-number` must be set to -1 because
+they are not known when the data file is written. The descriptor must not be
+compressed, so `compression-codec` must be omitted.
+
+A Puffin file used as a custom data file must contain exactly one
+`custom-data-file-v1` blob. It may contain other blob types whose lifecycle is
+the same as the custom data file.
+
 ### Compression codecs
 
 The data can also be uncompressed. If it is compressed the codec should be one of
