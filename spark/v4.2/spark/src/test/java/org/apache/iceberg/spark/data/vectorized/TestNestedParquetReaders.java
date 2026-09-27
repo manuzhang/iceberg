@@ -28,6 +28,8 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.Files;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
@@ -39,6 +41,7 @@ import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
+import org.apache.iceberg.mapping.MappingUtil;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
@@ -46,7 +49,14 @@ import org.apache.iceberg.spark.data.AvroDataTestBase;
 import org.apache.iceberg.spark.data.SparkParquetReaders;
 import org.apache.iceberg.types.Types;
 import org.apache.parquet.column.ParquetProperties;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroup;
 import org.apache.parquet.hadoop.ParquetOutputFormat;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.hadoop.util.HadoopOutputFile;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
@@ -315,6 +325,83 @@ class TestNestedParquetReaders extends AvroDataTestBase {
                         "child",
                         Types.StructType.of(optional(100, "added", Types.StringType.get()))))));
     writeAndValidate(schema, expected);
+  }
+
+  @Test
+  void nameMappingResolvesNestedFieldsWithoutIds() throws IOException {
+    // An external writer, such as Spark, emits no Iceberg field IDs.
+    MessageType fileSchema =
+        MessageTypeParser.parseMessageType(
+            "message spark_schema {\n"
+                + "  optional group events (LIST) {\n"
+                + "    repeated group list {\n"
+                + "      optional group element {\n"
+                + "        optional int32 value;\n"
+                + "        optional binary label (STRING);\n"
+                + "      }\n"
+                + "    }\n"
+                + "  }\n"
+                + "}");
+    File file = temp.resolve("no-field-ids.parquet").toFile();
+    Configuration conf = new Configuration();
+    try (ParquetWriter<Group> writer =
+        ExampleParquetWriter.builder(HadoopOutputFile.fromPath(new Path(file.toString()), conf))
+            .withType(fileSchema)
+            .withConf(conf)
+            .build()) {
+      writer.write(event(fileSchema, 3, "first"));
+      writer.write(event(fileSchema, 4, "second"));
+    }
+
+    Schema original =
+        new Schema(
+            optional(
+                1,
+                "events",
+                Types.ListType.ofOptional(
+                    2,
+                    Types.StructType.of(
+                        optional(3, "value", Types.IntegerType.get()),
+                        optional(4, "label", Types.StringType.get())))));
+    // Renamed at every level, children reordered, and value promoted, so only the IDs that the
+    // name mapping assigns can resolve the projection.
+    Schema projection =
+        new Schema(
+            optional(
+                1,
+                "renamed_events",
+                Types.ListType.ofOptional(
+                    2,
+                    Types.StructType.of(
+                        optional(4, "renamed_label", Types.StringType.get()),
+                        optional(3, "renamed_value", Types.LongType.get())))));
+
+    List<String> labels = Lists.newArrayList();
+    List<Long> values = Lists.newArrayList();
+    try (CloseableIterable<ColumnarBatch> batches =
+        Parquet.read(Files.localInput(file))
+            .project(projection)
+            .withNameMapping(MappingUtil.create(original))
+            .recordsPerBatch(1)
+            .createBatchedReaderFunc(
+                type -> NestedParquetReaders.buildReader(projection, type, Map.of()))
+            .build()) {
+      for (ColumnarBatch batch : batches) {
+        labels.add(batch.column(0).getArray(0).getStruct(0, 2).getUTF8String(0).toString());
+        values.add(batch.column(0).getArray(0).getStruct(0, 2).getLong(1));
+      }
+    }
+
+    assertThat(labels).containsExactly("first", "second");
+    assertThat(values).containsExactly(3L, 4L);
+  }
+
+  private static Group event(MessageType fileSchema, int value, String label) {
+    Group row = new SimpleGroup(fileSchema);
+    Group element = row.addGroup("events").addGroup("list").addGroup("element");
+    element.add("value", value);
+    element.add("label", label);
+    return row;
   }
 
   private static Schema projectAddedChild(Schema schema) {

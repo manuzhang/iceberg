@@ -20,7 +20,6 @@ package org.apache.iceberg.spark.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -40,19 +39,13 @@ import org.apache.iceberg.data.RandomGenericData;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.io.CloseableIterable;
-import org.apache.iceberg.mapping.MappingUtil;
-import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkSQLProperties;
-import org.apache.iceberg.spark.SparkSchemaUtil;
-import org.apache.iceberg.spark.data.vectorized.NestedParquetReaders;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.Pair;
-import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,54 +67,6 @@ public class TestParquetVectorizedScan extends TestParquetScan {
   @AfterEach
   void resetNestedVectorization() {
     spark.conf().unset(SparkSQLProperties.PARQUET_NESTED_VECTORIZATION_ENABLED);
-  }
-
-  @Test
-  void importedNestedFileUsesNameMapping() throws Exception {
-    Dataset<Row> source =
-        spark.sql(
-            "SELECT array(named_struct('value', 3, 'label', 'first')) AS events "
-                + "UNION ALL SELECT array(named_struct('value', 4, 'label', 'second'))");
-    File directory = nestedTemp.resolve("imported").toFile();
-    source.coalesce(1).write().parquet(directory.toString());
-    File[] files = directory.listFiles((dir, name) -> name.endsWith(".parquet"));
-    assertThat(files).hasSize(1);
-    Schema original = SparkSchemaUtil.convert(source.schema());
-    Types.NestedField events = original.findField("events");
-    Types.ListType list = events.type().asListType();
-    Schema projection =
-        new Schema(
-            Types.NestedField.optional(
-                events.fieldId(),
-                "renamed_events",
-                Types.ListType.ofOptional(
-                    list.elementId(),
-                    Types.StructType.of(
-                        Types.NestedField.optional(
-                            original.findField("events.element.label").fieldId(),
-                            "renamed_label",
-                            Types.StringType.get()),
-                        Types.NestedField.optional(
-                            original.findField("events.element.value").fieldId(),
-                            "renamed_value",
-                            Types.LongType.get())))));
-    List<String> labels = Lists.newArrayList();
-    List<Long> values = Lists.newArrayList();
-    try (CloseableIterable<ColumnarBatch> batches =
-        Parquet.read(Files.localInput(files[0]))
-            .project(projection)
-            .withNameMapping(MappingUtil.create(original))
-            .recordsPerBatch(1)
-            .createBatchedReaderFunc(
-                type -> NestedParquetReaders.buildReader(projection, type, Map.of()))
-            .build()) {
-      for (ColumnarBatch batch : batches) {
-        labels.add(batch.column(0).getArray(0).getStruct(0, 2).getUTF8String(0).toString());
-        values.add(batch.column(0).getArray(0).getStruct(0, 2).getLong(1));
-      }
-    }
-    assertThat(labels).containsExactly("first", "second");
-    assertThat(values).containsExactly(3L, 4L);
   }
 
   @Test
