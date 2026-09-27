@@ -98,15 +98,27 @@ public class IcebergNestedParquetReader implements VectorizedReader<ColumnarBatc
 
   private void initialize() {
     if (!initialized) {
-      for (int i = 0; i < schema.children().size(); i++) {
-        ParquetColumn column = schema.children().apply(i);
-        WritableColumnVector vector = new OnHeapColumnVector(batchSize, column.sparkType());
-        ParquetColumnVector nested =
-            new ParquetColumnVector(column, vector, batchSize, Collections.emptySet(), true, null);
-        columns.add(nested);
-        leaves.addAll(nested.getLeaves());
-      }
+      allocate();
       this.initialized = true;
+    }
+  }
+
+  // Keeps the column readers so that decoding continues within the current row group.
+  private void allocate() {
+    List<ParquetColumnVector> previous = Lists.newArrayList(leaves);
+    columns.clear();
+    leaves.clear();
+    for (int i = 0; i < schema.children().size(); i++) {
+      ParquetColumn column = schema.children().apply(i);
+      WritableColumnVector vector = new OnHeapColumnVector(batchSize, column.sparkType());
+      ParquetColumnVector nested =
+          new ParquetColumnVector(column, vector, batchSize, Collections.emptySet(), true, null);
+      columns.add(nested);
+      leaves.addAll(nested.getLeaves());
+    }
+
+    for (int i = 0; i < previous.size(); i++) {
+      leaves.get(i).setColumnReader(previous.get(i).getColumnReader());
     }
   }
 
@@ -134,6 +146,11 @@ public class IcebergNestedParquetReader implements VectorizedReader<ColumnarBatc
 
   @Override
   public ColumnarBatch read(ColumnarBatch reuse, int numRows) {
+    if (reuse == null) {
+      // The caller may retain the previous batch, so its vectors cannot be overwritten.
+      allocate();
+    }
+
     try {
       for (ParquetColumnVector column : columns) {
         column.reset();

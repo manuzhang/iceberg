@@ -90,13 +90,21 @@ class TestNestedParquetReaders extends AvroDataTestBase {
   @Override
   protected void writeAndValidate(Schema schema, Schema expected, List<Record> records)
       throws IOException {
-    validate(schema, expected, records, true, true, ParquetProperties.WriterVersion.PARQUET_1_0);
+    validate(
+        schema,
+        expected,
+        records,
+        ID_TO_CONSTANT,
+        true,
+        true,
+        ParquetProperties.WriterVersion.PARQUET_1_0);
   }
 
   private void validate(
       Schema schema,
       Schema expected,
       List<Record> records,
+      Map<Integer, ?> constants,
       boolean reuse,
       boolean dictionary,
       ParquetProperties.WriterVersion version)
@@ -123,7 +131,7 @@ class TestNestedParquetReaders extends AvroDataTestBase {
             .project(expected)
             .recordsPerBatch(BATCH_SIZE)
             .createBatchedReaderFunc(
-                type -> NestedParquetReaders.buildReader(expected, type, ID_TO_CONSTANT));
+                type -> NestedParquetReaders.buildReader(expected, type, constants));
     if (reuse) {
       builder.reuseContainers();
     }
@@ -132,7 +140,7 @@ class TestNestedParquetReaders extends AvroDataTestBase {
             Parquet.read(Files.localInput(file))
                 .project(expected)
                 .createReaderFunc(
-                    type -> SparkParquetReaders.buildReader(expected, type, ID_TO_CONSTANT))
+                    type -> SparkParquetReaders.buildReader(expected, type, constants))
                 .build()) {
       Iterator<InternalRow> expectedRows = rows.iterator();
       UnsafeProjection projection = UnsafeProjection.create(SparkSchemaUtil.convert(expected));
@@ -175,7 +183,7 @@ class TestNestedParquetReaders extends AvroDataTestBase {
     List<Record> records = RandomGenericData.generate(schema, 500, 17L);
     for (boolean reuse : new boolean[] {true, false}) {
       for (ParquetProperties.WriterVersion version : ParquetProperties.WriterVersion.values()) {
-        validate(schema, schema, records, reuse, dictionary, version);
+        validate(schema, schema, records, ID_TO_CONSTANT, reuse, dictionary, version);
       }
     }
   }
@@ -325,6 +333,95 @@ class TestNestedParquetReaders extends AvroDataTestBase {
                         "child",
                         Types.StructType.of(optional(100, "added", Types.StringType.get()))))));
     writeAndValidate(schema, expected);
+  }
+
+  @Test
+  void batchesWithoutReuseAreIndependent() throws IOException {
+    Schema schema =
+        new Schema(
+            optional(1, "tags", Types.ListType.ofOptional(2, Types.IntegerType.get())),
+            optional(3, "info", Types.StructType.of(optional(4, "name", Types.StringType.get()))));
+    List<Record> records = RandomGenericData.generate(schema, 50, 7L);
+    File file = temp.resolve("no-reuse.parquet").toFile();
+    try (FileAppender<Record> writer =
+        Parquet.write(Files.localOutput(file))
+            .schema(schema)
+            .createWriterFunc(GenericParquetWriter::create)
+            .build()) {
+      writer.addAll(records);
+    }
+
+    try (CloseableIterable<ColumnarBatch> batches =
+            Parquet.read(Files.localInput(file))
+                .project(schema)
+                .recordsPerBatch(BATCH_SIZE)
+                .createBatchedReaderFunc(
+                    type -> NestedParquetReaders.buildReader(schema, type, Map.of()))
+                .build();
+        CloseableIterable<InternalRow> rows =
+            Parquet.read(Files.localInput(file))
+                .project(schema)
+                .createReaderFunc(type -> SparkParquetReaders.buildReader(schema, type, Map.of()))
+                .build()) {
+      // Every batch is retained before any is checked, so a batch overwritten by a later read
+      // no longer matches the rows it was read from.
+      List<ColumnarBatch> retained = Lists.newArrayList(batches);
+      assertThat(retained).hasSizeGreaterThan(1);
+      Iterator<InternalRow> expectedRows = rows.iterator();
+      UnsafeProjection projection = UnsafeProjection.create(SparkSchemaUtil.convert(schema));
+      for (ColumnarBatch batch : retained) {
+        for (int i = 0; i < batch.numRows(); i++) {
+          assertThat(projection.apply(batch.getRow(i)).copy())
+              .isEqualTo(projection.apply(expectedRows.next()).copy());
+        }
+      }
+      assertThat(expectedRows.hasNext()).isFalse();
+    }
+  }
+
+  @Test
+  void nestedConstantsReplaceFileValues() throws IOException {
+    Schema schema =
+        new Schema(
+            optional(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(2, "part", Types.IntegerType.get()),
+                    optional(3, "data", Types.StringType.get()))));
+    validate(
+        schema,
+        schema,
+        RandomGenericData.generate(schema, 100, 31L),
+        Map.of(2, 34),
+        true,
+        true,
+        ParquetProperties.WriterVersion.PARQUET_1_0);
+  }
+
+  @Test
+  void nestedConstantsFillMissingChildren() throws IOException {
+    // An imported file may not contain its identity partition source columns.
+    Schema schema =
+        new Schema(
+            optional(
+                1, "parent", Types.StructType.of(optional(3, "data", Types.StringType.get()))));
+    Schema expected =
+        new Schema(
+            optional(
+                1,
+                "parent",
+                Types.StructType.of(
+                    optional(2, "part", Types.IntegerType.get()),
+                    optional(3, "data", Types.StringType.get()))));
+    validate(
+        schema,
+        expected,
+        RandomGenericData.generate(schema, 100, 31L),
+        Map.of(2, 34),
+        true,
+        true,
+        ParquetProperties.WriterVersion.PARQUET_1_0);
   }
 
   @Test

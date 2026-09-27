@@ -60,7 +60,16 @@ class NestedColumnVector extends ColumnVector {
   }
 
   static ColumnVector project(
-      Types.NestedField field, Type parquet, WritableColumnVector vector, int batchSize) {
+      Types.NestedField field,
+      Type parquet,
+      WritableColumnVector vector,
+      Map<Integer, ?> constants,
+      int batchSize) {
+    if (constants.containsKey(field.fieldId())) {
+      // containsKey is used because the constant may be null
+      return new ConstantColumnVector(field.type(), batchSize, constants.get(field.fieldId()));
+    }
+
     if (parquet == null) {
       Preconditions.checkArgument(
           field.isOptional() || field.initialDefault() != null,
@@ -77,13 +86,15 @@ class NestedColumnVector extends ColumnVector {
     List<ColumnVector> children = Lists.newArrayList();
     if (field.type().isStructType()) {
       children.addAll(
-          structChildren(field.type().asStructType(), parquet.asGroupType(), vector, batchSize));
+          structChildren(
+              field.type().asStructType(), parquet.asGroupType(), vector, constants, batchSize));
     } else if (field.type().isListType()) {
       children.add(
           project(
               field.type().asListType().fields().get(0),
               ParquetSchemaUtil.determineListElementType(parquet.asGroupType()),
               vector.getChild(0),
+              constants,
               batchSize));
     } else if (field.type().isMapType()) {
       GroupType entries = parquet.asGroupType().getType(0).asGroupType();
@@ -93,6 +104,7 @@ class NestedColumnVector extends ColumnVector {
                 field.type().asMapType().fields().get(i),
                 entries.getType(i),
                 vector.getChild(i),
+                constants,
                 batchSize));
       }
     }
@@ -104,14 +116,23 @@ class NestedColumnVector extends ColumnVector {
   }
 
   private static List<ColumnVector> structChildren(
-      Types.StructType expected, GroupType group, WritableColumnVector vector, int batchSize) {
+      Types.StructType expected,
+      GroupType group,
+      WritableColumnVector vector,
+      Map<Integer, ?> constants,
+      int batchSize) {
     List<Types.NestedField> fields = expected.fields();
     int[] indices = fieldIndices(group, fields);
     List<ColumnVector> children = Lists.newArrayList();
     for (int i = 0; i < fields.size(); i++) {
       Type childType = indices[i] < 0 ? null : group.getType(indices[i]);
       children.add(
-          project(fields.get(i), childType, childVector(group, indices[i], vector), batchSize));
+          project(
+              fields.get(i),
+              childType,
+              childVector(group, indices[i], vector),
+              constants,
+              batchSize));
     }
 
     return children;

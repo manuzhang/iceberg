@@ -139,17 +139,20 @@ public class NestedParquetReaders {
 
   private static class Reader implements VectorizedReader<ColumnarBatch> {
     private final Schema expected;
+    private final Map<Integer, ?> constants;
     private final Type[] parquetTypes;
     private final VectorizedReader<ColumnarBatch> primitives;
     private final IcebergNestedParquetReader nested;
     private final int[] primitiveIndices;
     private final int[] nestedIndices;
     private ColumnarBatch primitiveBatch;
+    private ColumnarBatch nestedBatch;
     private ColumnVector[] projected;
     private int batchSize;
 
     private Reader(Schema expected, MessageType fileSchema, Map<Integer, ?> constants) {
       this.expected = expected;
+      this.constants = constants;
       this.primitiveIndices = new int[expected.columns().size()];
       this.nestedIndices = new int[expected.columns().size()];
       this.parquetTypes = new Type[expected.columns().size()];
@@ -208,8 +211,9 @@ public class NestedParquetReaders {
       if (primitives != null) {
         this.primitiveBatch = primitives.read(reuse == null ? null : primitiveBatch, numRows);
       }
-      ColumnarBatch nestedBatch = nested.read(null, numRows);
-      if (projected == null) {
+      this.nestedBatch = nested.read(reuse == null ? null : nestedBatch, numRows);
+      // Without reuse, the nested reader decodes into new vectors that must be projected again.
+      if (projected == null || reuse == null) {
         this.projected = new ColumnVector[expected.columns().size()];
         for (int i = 0; i < projected.length; i++) {
           if (primitiveIndices[i] < 0) {
@@ -219,6 +223,7 @@ public class NestedParquetReaders {
                     expected.columns().get(i),
                     parquetTypes[i],
                     index < 0 ? null : (WritableColumnVector) nestedBatch.column(index),
+                    constants,
                     batchSize);
           }
         }
