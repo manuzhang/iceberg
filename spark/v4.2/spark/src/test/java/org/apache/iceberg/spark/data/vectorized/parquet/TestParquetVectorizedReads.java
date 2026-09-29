@@ -41,7 +41,9 @@ import java.util.stream.Stream;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.iceberg.Files;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.arrow.ArrowAllocation;
+import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.RandomGenericData;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.parquet.GenericParquetReaders;
@@ -57,7 +59,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.data.AvroDataTestBase;
 import org.apache.iceberg.spark.data.GenericsHelpers;
 import org.apache.iceberg.spark.data.RandomData;
@@ -67,20 +68,28 @@ import org.apache.iceberg.types.Type.PrimitiveType;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.parquet.column.ParquetProperties;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.hadoop.ParquetOutputFormat;
-import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.io.LocalOutputFile;
 import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.Type;
+import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestParquetVectorizedReads extends AvroDataTestBase {
   private static final int NUM_ROWS = 200_000;
   static final int BATCH_SIZE = 10_000;
+  // lists and maps hold many values per row, so fewer rows still span several smaller batches
+  private static final int REPEATED_NUM_ROWS = 1_000;
+  private static final int REPEATED_BATCH_SIZE = 100;
 
   private static final String PLAIN = "PLAIN";
   private static final List<String> GOLDEN_FILE_ENCODINGS =
@@ -112,14 +121,16 @@ public class TestParquetVectorizedReads extends AvroDataTestBase {
 
   @Override
   protected void writeAndValidate(Schema writeSchema, Schema expectedSchema) throws IOException {
+    boolean repeated =
+        TypeUtil.find(writeSchema, type -> type.isListType() || type.isMapType()) != null;
     writeAndValidate(
         writeSchema,
         expectedSchema,
-        getNumRows(),
+        repeated ? REPEATED_NUM_ROWS : getNumRows(),
         29714278L,
         RandomData.DEFAULT_NULL_PERCENTAGE,
         true,
-        BATCH_SIZE,
+        repeated ? REPEATED_BATCH_SIZE : BATCH_SIZE,
         IDENTITY);
   }
 
@@ -137,7 +148,7 @@ public class TestParquetVectorizedReads extends AvroDataTestBase {
 
   @Override
   protected boolean supportsNestedTypes() {
-    return false;
+    return true;
   }
 
   @Override
@@ -332,17 +343,151 @@ public class TestParquetVectorizedReads extends AvroDataTestBase {
 
   @Test
   @Override
-  public void testNestedStruct() {
-    assertThatThrownBy(
-            () ->
-                VectorizedSparkParquetReaders.buildReader(
-                    TypeUtil.assignIncreasingFreshIds(
-                        new Schema(required(1, "struct", SUPPORTED_PRIMITIVES))),
-                    new MessageType(
-                        "struct", new GroupType(Type.Repetition.OPTIONAL, "struct").withId(1)),
-                    Maps.newHashMap()))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("Vectorized reads are not supported yet for struct fields");
+  public void testUnknownListType() {
+    assertThatThrownBy(super::testUnknownListType)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("Cannot convert element Parquet: unknown");
+  }
+
+  @Test
+  @Override
+  public void testUnknownMapType() {
+    assertThatThrownBy(super::testUnknownMapType)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("Cannot convert value Parquet: unknown");
+  }
+
+  @ParameterizedTest
+  @EnumSource(ParquetProperties.WriterVersion.class)
+  void nestedValuesSpanningPagesAndBatches(ParquetProperties.WriterVersion writerVersion)
+      throws IOException {
+    Schema schema =
+        new Schema(
+            required(1, "id", Types.LongType.get()),
+            optional(
+                2,
+                "list_of_lists",
+                Types.ListType.ofOptional(
+                    3, Types.ListType.ofOptional(4, Types.IntegerType.get()))),
+            optional(
+                5,
+                "map_of_structs",
+                Types.MapType.ofOptional(
+                    6,
+                    7,
+                    Types.StringType.get(),
+                    Types.StructType.of(
+                        optional(8, "count", Types.LongType.get()),
+                        optional(
+                            9, "tags", Types.ListType.ofOptional(10, Types.StringType.get()))))));
+
+    List<Record> records = Lists.newArrayList(RandomGenericData.generate(schema, 1_000, 0L));
+    File testFile = temp.resolve("nested.parquet").toFile();
+    try (FileAppender<Record> writer =
+        Parquet.write(Files.localOutput(testFile))
+            .schema(schema)
+            .createWriterFunc(GenericParquetWriter::create)
+            .writerVersion(writerVersion)
+            .set(TableProperties.PARQUET_PAGE_ROW_LIMIT, "10")
+            .build()) {
+      writer.addAll(records);
+    }
+
+    // each batch reads values from several pages, and more values than rows
+    assertRecordsMatch(schema, records.size(), records, testFile, true, 17);
+  }
+
+  @Test
+  void twoLevelLists() throws IOException {
+    MessageType fileSchema =
+        MessageTypeParser.parseMessageType(
+            "message table {"
+                + "  optional group ints (LIST) = 1 { repeated int32 array = 2; }"
+                + "  optional group structs (LIST) = 3 {"
+                + "    repeated group array = 4 { optional int32 x = 5; optional int32 y = 6; }"
+                + "  }"
+                + "}");
+    Types.StructType structType =
+        Types.StructType.of(
+            optional(5, "x", Types.IntegerType.get()), optional(6, "y", Types.IntegerType.get()));
+    Schema schema =
+        new Schema(
+            optional(1, "ints", Types.ListType.ofRequired(2, Types.IntegerType.get())),
+            optional(3, "structs", Types.ListType.ofRequired(4, structType)));
+
+    List<Record> expected = Lists.newArrayList();
+    File testFile = temp.resolve("two-level-lists.parquet").toFile();
+    try (ParquetWriter<Group> writer =
+        ExampleParquetWriter.builder(new LocalOutputFile(testFile.toPath()))
+            .withType(fileSchema)
+            .build()) {
+      SimpleGroupFactory groups = new SimpleGroupFactory(fileSchema);
+      for (int row = 0; row < 100; row += 1) {
+        List<Integer> values =
+            switch (row % 4) {
+              case 0 -> null;
+              case 1 -> ImmutableList.of();
+              case 2 -> ImmutableList.of(row, -row);
+              default -> ImmutableList.of(row);
+            };
+
+        Group group = groups.newGroup();
+        Record record = GenericRecord.create(schema);
+        if (values != null) {
+          Group ints = group.addGroup("ints");
+          Group structs = group.addGroup("structs");
+          List<Record> structRecords = Lists.newArrayList();
+          for (int value : values) {
+            ints.add("array", value);
+            structs.addGroup("array").append("x", value);
+            structRecords.add(GenericRecord.create(structType).copy("x", value));
+          }
+
+          record.setField("ints", values);
+          record.setField("structs", structRecords);
+        }
+
+        writer.write(group);
+        expected.add(record);
+      }
+    }
+
+    assertRecordsMatch(schema, expected.size(), expected, testFile, true, 7);
+  }
+
+  @Test
+  void structsProjectingOnlyAddedFields() throws IOException {
+    Schema writeSchema =
+        new Schema(
+            required(1, "id", Types.LongType.get()),
+            optional(2, "struct", Types.StructType.of(required(3, "data", Types.StringType.get()))),
+            optional(
+                4,
+                "list_of_structs",
+                Types.ListType.ofOptional(
+                    5, Types.StructType.of(required(6, "data", Types.StringType.get())))));
+
+    Schema expectedSchema =
+        new Schema(
+            required(1, "id", Types.LongType.get()),
+            optional(
+                2,
+                "struct",
+                Types.StructType.of(
+                    Types.NestedField.optional("added")
+                        .withId(7)
+                        .ofType(Types.IntegerType.get())
+                        .withInitialDefault(Literal.of(34))
+                        .build())),
+            optional(
+                4,
+                "list_of_structs",
+                Types.ListType.ofOptional(
+                    5, Types.StructType.of(optional(8, "added", Types.IntegerType.get())))));
+
+    // no projected field is in the file, so whether each struct is null comes from the column that
+    // is kept under it
+    writeAndValidate(writeSchema, expectedSchema);
   }
 
   @Test
