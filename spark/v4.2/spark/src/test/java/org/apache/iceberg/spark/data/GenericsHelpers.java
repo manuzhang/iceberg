@@ -306,9 +306,13 @@ public class GenericsHelpers {
       Types.ListType list, Collection<?> expected, ArrayData actual) {
     Type elementType = list.elementType();
     List<?> expectedElements = Lists.newArrayList(expected);
+    assertThat(actual.numElements())
+        .as("Should have the same number of elements")
+        .isEqualTo(expectedElements.size());
     for (int i = 0; i < expectedElements.size(); i += 1) {
       Object expectedValue = expectedElements.get(i);
-      Object actualValue = actual.get(i, convert(elementType));
+      // ColumnarArray does not return null for null elements
+      Object actualValue = actual.isNullAt(i) ? null : actual.get(i, convert(elementType));
 
       assertEqualsUnsafe(elementType, expectedValue, actualValue);
     }
@@ -321,11 +325,15 @@ public class GenericsHelpers {
     List<Map.Entry<?, ?>> expectedElements = Lists.newArrayList(expected.entrySet());
     ArrayData actualKeys = actual.keyArray();
     ArrayData actualValues = actual.valueArray();
+    assertThat(actual.numElements())
+        .as("Should have the same number of entries")
+        .isEqualTo(expectedElements.size());
 
     for (int i = 0; i < expectedElements.size(); i += 1) {
       Map.Entry<?, ?> expectedPair = expectedElements.get(i);
       Object actualKey = actualKeys.get(i, convert(keyType));
-      Object actualValue = actualValues.get(i, convert(valueType));
+      Object actualValue =
+          actualValues.isNullAt(i) ? null : actualValues.get(i, convert(valueType));
 
       assertEqualsUnsafe(keyType, expectedPair.getKey(), actualKey);
       assertEqualsUnsafe(valueType, expectedPair.getValue(), actualValue);
