@@ -272,6 +272,30 @@ public class TestChangelogTable extends ExtensionsTestBase {
   }
 
   @TestTemplate
+  public void projectSubsetOfChangelogColumns() {
+    createTableWithDefaultRows();
+
+    Table table = validationCatalog.loadTable(tableIdent);
+    Snapshot snap2 = table.currentSnapshot();
+    Snapshot snap1 = table.snapshot(snap2.parentId());
+
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(1, snap1.snapshotId()), row(2, snap2.snapshotId())),
+        sql("SELECT id, _commit_snapshot_id FROM %s.changes ORDER BY id", tableName));
+  }
+
+  @TestTemplate
+  public void projectChangelogColumnBeforeMetadataColumn() {
+    createTableWithDefaultRows();
+
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(1, "INSERT", 0L), row(2, "INSERT", 0L)),
+        sql("SELECT id, _change_type, _pos FROM %s.changes ORDER BY id", tableName));
+  }
+
+  @TestTemplate
   public void testMetadataColumns() {
     createTableWithDefaultRows();
     List<Object[]> rows =

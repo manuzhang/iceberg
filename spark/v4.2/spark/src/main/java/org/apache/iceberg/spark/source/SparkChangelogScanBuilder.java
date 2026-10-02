@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.spark.source;
 
+import org.apache.iceberg.ChangelogUtil;
 import org.apache.iceberg.IncrementalChangelogScan;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
@@ -82,6 +83,13 @@ public class SparkChangelogScanBuilder extends BaseSparkScanBuilder
     Schema projection = projectionWithMetadataColumns();
     IncrementalChangelogScan scan = buildIcebergScan(projection, startSnapshotId, endSnapshotId);
     return new SparkChangelogScan(spark(), table(), scan, readConf(), projection, filters());
+  }
+
+  // readers always produce the changelog columns after all other columns
+  @Override
+  protected Schema projectionWithMetadataColumns() {
+    Schema projection = super.projectionWithMetadataColumns();
+    return ChangelogUtil.changelogSchema(ChangelogUtil.dropChangelogMetadata(projection));
   }
 
   private IncrementalChangelogScan buildIcebergScan(
