@@ -25,27 +25,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.iceberg.ChangelogOperation;
 import org.apache.iceberg.ChangelogScanTask;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.Files;
 import org.apache.iceberg.IncrementalChangelogScan;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.TestHelpers;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.FileHelpers;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.TestBase;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -222,8 +227,142 @@ public class TestChangelogReader extends TestBase {
     assertEquals("Should have expected rows", expectedRows, internalRowsToJava(rows));
   }
 
+  @Test
+  public void testInsertWithDeletionVector() throws IOException {
+    upgradeToV3();
+
+    DeleteFile dv = writeDV(dataFile1, 1);
+    table.newRowDelta().addRows(dataFile1).addDeletes(dv).commit();
+    long snapshotId1 = table.currentSnapshot().snapshotId();
+
+    List<Object[]> expectedRows = Lists.newArrayList();
+    addExpectedRows(
+        expectedRows,
+        ChangelogOperation.INSERT,
+        snapshotId1,
+        0,
+        ImmutableList.of(records1.get(0), records1.get(2), records1.get(3)));
+
+    assertEquals("Should have expected rows", expectedRows, internalRowsToJava(read(newScan())));
+  }
+
+  @Test
+  public void testDeletedRowsWithDeletionVector() throws IOException {
+    upgradeToV3();
+
+    table.newAppend().appendFile(dataFile1).commit();
+    long snapshotId1 = table.currentSnapshot().snapshotId();
+
+    DeleteFile dv = writeDV(dataFile1, 0, 2);
+    table.newRowDelta().addDeletes(dv).commit();
+    long snapshotId2 = table.currentSnapshot().snapshotId();
+
+    List<Object[]> expectedRows = Lists.newArrayList();
+    addExpectedRows(
+        expectedRows,
+        ChangelogOperation.DELETE,
+        snapshotId2,
+        0,
+        ImmutableList.of(records1.get(0), records1.get(2)));
+
+    List<InternalRow> rows = read(newScan().fromSnapshotExclusive(snapshotId1));
+    assertEquals("Should have expected rows", expectedRows, internalRowsToJava(rows));
+  }
+
+  @Test
+  public void testDeletedRowsWithReplacedDeletionVector() throws IOException {
+    upgradeToV3();
+
+    table.newAppend().appendFile(dataFile1).commit();
+
+    DeleteFile dv = writeDV(dataFile1, 0);
+    table.newRowDelta().addDeletes(dv).commit();
+    long snapshotId2 = table.currentSnapshot().snapshotId();
+
+    DeleteFile newDV = writeDV(dataFile1, 0, 2);
+    table
+        .newRowDelta()
+        .addDeletes(newDV)
+        .removeDeletes(dv)
+        .validateFromSnapshot(snapshotId2)
+        .commit();
+    long snapshotId3 = table.currentSnapshot().snapshotId();
+
+    List<Object[]> expectedRows = Lists.newArrayList();
+    addExpectedRows(
+        expectedRows, ChangelogOperation.DELETE, snapshotId3, 0, ImmutableList.of(records1.get(2)));
+
+    List<InternalRow> rows = read(newScan().fromSnapshotExclusive(snapshotId2));
+    assertEquals("Should have expected rows", expectedRows, internalRowsToJava(rows));
+  }
+
+  @Test
+  public void testDeletedFileWithDeletionVector() throws IOException {
+    upgradeToV3();
+
+    table.newAppend().appendFile(dataFile1).commit();
+
+    DeleteFile dv = writeDV(dataFile1, 0);
+    table.newRowDelta().addDeletes(dv).commit();
+    long snapshotId2 = table.currentSnapshot().snapshotId();
+
+    table.newDelete().deleteFile(dataFile1).commit();
+    long snapshotId3 = table.currentSnapshot().snapshotId();
+
+    List<Object[]> expectedRows = Lists.newArrayList();
+    addExpectedRows(
+        expectedRows,
+        ChangelogOperation.DELETE,
+        snapshotId3,
+        0,
+        ImmutableList.of(records1.get(1), records1.get(2), records1.get(3)));
+
+    List<InternalRow> rows = read(newScan().fromSnapshotExclusive(snapshotId2));
+    assertEquals("Should have expected rows", expectedRows, internalRowsToJava(rows));
+  }
+
   private IncrementalChangelogScan newScan() {
     return table.newIncrementalChangelogScan();
+  }
+
+  private void upgradeToV3() {
+    table.updateProperties().set(TableProperties.FORMAT_VERSION, "3").commit();
+  }
+
+  private DeleteFile writeDV(DataFile dataFile, long... positions) throws IOException {
+    List<Pair<CharSequence, Long>> deletes = Lists.newArrayList();
+    for (long position : positions) {
+      deletes.add(Pair.of(dataFile.location(), position));
+    }
+
+    return FileHelpers.writeDeleteFile(
+            table,
+            Files.localOutput(File.createTempFile("junit", null, temp.toFile())),
+            TestHelpers.Row.of(0),
+            deletes,
+            3)
+        .first();
+  }
+
+  // reads all rows and orders them by change ordinal and id
+  private List<InternalRow> read(IncrementalChangelogScan scan) throws IOException {
+    List<InternalRow> rows = Lists.newArrayList();
+
+    try (CloseableIterable<ScanTaskGroup<ChangelogScanTask>> taskGroups = scan.planTasks()) {
+      for (ScanTaskGroup<ChangelogScanTask> taskGroup : taskGroups) {
+        try (ChangelogRowReader reader =
+            new ChangelogRowReader(table, table.io(), taskGroup, table.schema(), false, true)) {
+          while (reader.next()) {
+            rows.add(reader.get().copy());
+          }
+        }
+      }
+    }
+
+    rows.sort(
+        Comparator.comparingInt((InternalRow row) -> row.getInt(3))
+            .thenComparingInt(row -> row.getInt(0)));
+    return rows;
   }
 
   private List<Object[]> addExpectedRows(

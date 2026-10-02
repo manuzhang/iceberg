@@ -18,23 +18,27 @@
  */
 package org.apache.iceberg.spark.extensions;
 
+import static org.apache.iceberg.TableProperties.DELETE_MODE;
 import static org.apache.iceberg.TableProperties.FORMAT_VERSION;
 import static org.apache.iceberg.TableProperties.MANIFEST_MERGE_ENABLED;
 import static org.apache.iceberg.TableProperties.MANIFEST_MIN_MERGE_COUNT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.util.List;
 import org.apache.iceberg.DataOperations;
 import org.apache.iceberg.Parameter;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
+import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.spark.SparkCatalogConfig;
 import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.source.SparkChangelogTable;
+import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.spark.sql.DataFrameReader;
 import org.apache.spark.sql.Row;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +62,12 @@ public class TestChangelogTable extends ExtensionsTestBase {
         SparkCatalogConfig.HIVE.implementation(),
         SparkCatalogConfig.HIVE.properties(),
         2
+      },
+      {
+        SparkCatalogConfig.SPARK_SESSION.catalogName(),
+        SparkCatalogConfig.SPARK_SESSION.implementation(),
+        SparkCatalogConfig.SPARK_SESSION.properties(),
+        3
       }
     };
   }
@@ -225,6 +235,55 @@ public class TestChangelogTable extends ExtensionsTestBase {
   }
 
   @TestTemplate
+  public void testRowDeletesWithDeletionVectors() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    createTableWithMergeOnReadDeletes();
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'a'), (3, 'b')", tableName);
+
+    Table table = validationCatalog.loadTable(tableIdent);
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    sql("DELETE FROM %s WHERE id = 2", tableName);
+
+    table.refresh();
+
+    Snapshot snap2 = table.currentSnapshot();
+    assertThat(snap2.addedDeleteFiles(table.io())).allMatch(ContentFileUtil::isDV);
+
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(2, "a", "DELETE", 0, snap2.snapshotId())),
+        changelogRecords(snap1, snap2));
+  }
+
+  @TestTemplate
+  public void testRowDeletesWithReplacedDeletionVectors() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    createTableWithMergeOnReadDeletes();
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'a'), (3, 'b')", tableName);
+    sql("DELETE FROM %s WHERE id = 2", tableName);
+
+    Table table = validationCatalog.loadTable(tableIdent);
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    sql("DELETE FROM %s WHERE id = 1", tableName);
+
+    table.refresh();
+
+    Snapshot snap3 = table.currentSnapshot();
+    assertThat(snap3.removedDeleteFiles(table.io())).hasSize(1);
+
+    assertEquals(
+        "Rows should match",
+        ImmutableList.of(row(1, "a", "DELETE", 0, snap3.snapshotId())),
+        changelogRecords(snap2, snap3));
+  }
+
+  @TestTemplate
   public void testExistingEntriesInNewDataManifestsAreIgnored() {
     sql(
         "CREATE TABLE %s (id INT, data STRING) "
@@ -367,6 +426,13 @@ public class TestChangelogTable extends ExtensionsTestBase {
             + " '%s' = '%d' "
             + ")",
         tableName, FORMAT_VERSION, formatVersion);
+  }
+
+  private void createTableWithMergeOnReadDeletes() {
+    createTable();
+    sql(
+        "ALTER TABLE %s SET TBLPROPERTIES ('%s' = '%s')",
+        tableName, DELETE_MODE, RowLevelOperationMode.MERGE_ON_READ.modeName());
   }
 
   private void insertDefaultRows() {
