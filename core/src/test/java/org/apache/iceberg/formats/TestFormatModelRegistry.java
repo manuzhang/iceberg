@@ -22,19 +22,28 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.Files;
+import org.apache.iceberg.TestTables;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.util.Pair;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 class TestFormatModelRegistry {
+  @TempDir private Path temp;
 
   @BeforeEach
   void clearRegistry() {
     FormatModelRegistry.models().clear();
+    FormatModelRegistry.customModels().clear();
   }
 
   @Test
@@ -86,6 +95,50 @@ class TestFormatModelRegistry {
             () -> FormatModelRegistry.register(new DummyParquetFormatModel(Object.class, null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Cannot register class");
+  }
+
+  @Test
+  void registerCustomFormatModel() {
+    CustomFormatModel<?, ?> model = new DummyCustomFormatModel("VORTEX", Object.class);
+
+    FormatModelRegistry.register(model);
+
+    assertThat(FormatModelRegistry.models()).isEmpty();
+    assertThat(FormatModelRegistry.customModels())
+        .containsEntry(Pair.of("vortex", Object.class), model);
+  }
+
+  @Test
+  void rejectDuplicateCustomFormatModel() {
+    FormatModelRegistry.register(new DummyCustomFormatModel("vortex", Object.class));
+
+    assertThatThrownBy(
+            () -> FormatModelRegistry.register(new DummyCustomFormatModel("VORTEX", Object.class)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Cannot register class");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void resolvesCustomReadBuilder() throws IOException {
+    ReadBuilder<Object, Object> delegate = Mockito.mock(ReadBuilder.class);
+    DummyCustomFormatModel model = new DummyCustomFormatModel("vortex", Object.class, delegate);
+    FormatModelRegistry.register(model);
+    String dataLocation = temp.resolve("data.vortex").toString();
+    OutputFile descriptorFile = Files.localOutput(temp.resolve("data.custom").toFile());
+    CustomFileFormatParser.write(CustomFileFormat.of("vortex", dataLocation), descriptorFile);
+
+    ReadBuilder<Object, Object> builder =
+        FormatModelRegistry.readBuilder(
+            FileFormat.CUSTOM,
+            Object.class,
+            descriptorFile.toInputFile(),
+            new TestTables.LocalFileIO());
+    builder.split(10L, 20L).project(null);
+
+    assertThat(model.inputFile().location()).isEqualTo(dataLocation);
+    Mockito.verify(delegate, Mockito.never()).split(Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verify(delegate).project(null);
   }
 
   @Test
@@ -158,6 +211,55 @@ class TestFormatModelRegistry {
     @Override
     public ReadBuilder<Object, Object> readBuilder(InputFile inputFile) {
       return null;
+    }
+  }
+
+  private static class DummyCustomFormatModel implements CustomFormatModel<Object, Object> {
+    private final String customFormatName;
+    private final Class<?> type;
+    private final ReadBuilder<Object, Object> readBuilder;
+    private InputFile inputFile;
+
+    private DummyCustomFormatModel(String customFormatName, Class<?> type) {
+      this(customFormatName, type, null);
+    }
+
+    private DummyCustomFormatModel(
+        String customFormatName, Class<?> type, ReadBuilder<Object, Object> readBuilder) {
+      this.customFormatName = customFormatName;
+      this.type = type;
+      this.readBuilder = readBuilder;
+    }
+
+    private InputFile inputFile() {
+      return inputFile;
+    }
+
+    @Override
+    public String customFormatName() {
+      return customFormatName;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Class<Object> type() {
+      return (Class<Object>) type;
+    }
+
+    @Override
+    public Class<Object> schemaType() {
+      return Object.class;
+    }
+
+    @Override
+    public ModelWriteBuilder<Object, Object> writeBuilder(EncryptedOutputFile outputFile) {
+      return null;
+    }
+
+    @Override
+    public ReadBuilder<Object, Object> readBuilder(InputFile inputFile) {
+      this.inputFile = inputFile;
+      return readBuilder;
     }
   }
 }
