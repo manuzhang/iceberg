@@ -20,6 +20,8 @@ package org.apache.iceberg.spark.source;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.apache.iceberg.AddedRowsScanTask;
 import org.apache.iceberg.ChangelogScanTask;
@@ -30,20 +32,25 @@ import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.DeletedDataFileScanTask;
 import org.apache.iceberg.DeletedRowsScanTask;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.deletes.PositionDeleteIndex;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.spark.rdd.InputFileBlockHolder;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.JoinedRow;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.unsafe.types.UTF8String;
+import scala.collection.JavaConverters;
 
 class ChangelogRowReader extends BaseRowReader<ChangelogScanTask>
     implements PartitionReader<InternalRow> {
@@ -101,7 +108,7 @@ class ChangelogRowReader extends BaseRowReader<ChangelogScanTask>
       return openAddedRowsScanTask((AddedRowsScanTask) task);
 
     } else if (task instanceof DeletedRowsScanTask) {
-      throw new UnsupportedOperationException("Deleted rows scan task is not supported yet");
+      return openDeletedRowsScanTask((DeletedRowsScanTask) task);
 
     } else if (task instanceof DeletedDataFileScanTask) {
       return openDeletedDataFileScanTask((DeletedDataFileScanTask) task);
@@ -115,14 +122,63 @@ class ChangelogRowReader extends BaseRowReader<ChangelogScanTask>
   CloseableIterable<InternalRow> openAddedRowsScanTask(AddedRowsScanTask task) {
     String filePath = task.file().location();
     SparkDeleteFilter deletes = new SparkDeleteFilter(filePath, task.deletes(), counter(), true);
-    return deletes.filter(rows(task, deletes.requiredSchema()));
+    Schema readSchema = deletes.requiredSchema();
+    return expectedRows(deletes.filter(rows(task, readSchema)), readSchema);
+  }
+
+  private CloseableIterable<InternalRow> openDeletedRowsScanTask(DeletedRowsScanTask task) {
+    String filePath = task.file().location();
+    SparkDeleteFilter addedDeletes =
+        new SparkDeleteFilter(filePath, task.addedDeletes(), counter(), true);
+    SparkDeleteFilter existingDeletes =
+        new SparkDeleteFilter(filePath, task.existingDeletes(), counter(), true);
+    Schema readSchema = addedDeletes.requiredSchema();
+    int posColumn = readSchema.columns().indexOf(MetadataColumns.ROW_POSITION);
+    PositionDeleteIndex addedPositions = addedDeletes.deletedRowPositions();
+    PositionDeleteIndex existingPositions = existingDeletes.deletedRowPositions();
+
+    CloseableIterable<InternalRow> deletedRows =
+        CloseableIterable.filter(
+            rows(task, readSchema),
+            row -> {
+              long pos = row.getLong(posColumn);
+              return addedPositions.isDeleted(pos)
+                  && (existingPositions == null || !existingPositions.isDeleted(pos));
+            });
+
+    return expectedRows(deletedRows, readSchema);
   }
 
   private CloseableIterable<InternalRow> openDeletedDataFileScanTask(DeletedDataFileScanTask task) {
     String filePath = task.file().location();
     SparkDeleteFilter deletes =
         new SparkDeleteFilter(filePath, task.existingDeletes(), counter(), true);
-    return deletes.filter(rows(task, deletes.requiredSchema()));
+    Schema readSchema = deletes.requiredSchema();
+    return expectedRows(deletes.filter(rows(task, readSchema)), readSchema);
+  }
+
+  // drops the columns that the delete filter appended so the changelog metadata follows the
+  // expected columns
+  private CloseableIterable<InternalRow> expectedRows(
+      CloseableIterable<InternalRow> rows, Schema readSchema) {
+    int expectedColumns = expectedSchema().columns().size();
+    if (readSchema.columns().size() == expectedColumns) {
+      return rows;
+    }
+
+    List<Object> ordinals =
+        IntStream.range(0, expectedColumns).boxed().collect(Collectors.toList());
+    ProjectingInternalRow projection =
+        new ProjectingInternalRow(
+            SparkSchemaUtil.convert(expectedSchema()),
+            JavaConverters.asScala(ordinals).toIndexedSeq());
+
+    return CloseableIterable.transform(
+        rows,
+        row -> {
+          projection.project(row);
+          return projection;
+        });
   }
 
   private CloseableIterable<InternalRow> rows(ContentScanTask<DataFile> task, Schema readSchema) {
@@ -151,7 +207,7 @@ class ChangelogRowReader extends BaseRowReader<ChangelogScanTask>
       return addedRowsScanTaskFiles((AddedRowsScanTask) task);
 
     } else if (task instanceof DeletedRowsScanTask) {
-      throw new UnsupportedOperationException("Deleted rows scan task is not supported yet");
+      return deletedRowsScanTaskFiles((DeletedRowsScanTask) task);
 
     } else if (task instanceof DeletedDataFileScanTask) {
       return deletedDataFileScanTaskFiles((DeletedDataFileScanTask) task);
@@ -160,6 +216,14 @@ class ChangelogRowReader extends BaseRowReader<ChangelogScanTask>
       throw new IllegalArgumentException(
           "Unsupported changelog scan task type: " + task.getClass().getName());
     }
+  }
+
+  private static Stream<ContentFile<?>> deletedRowsScanTaskFiles(DeletedRowsScanTask task) {
+    DataFile file = task.file();
+    List<DeleteFile> addedDeletes = task.addedDeletes();
+    List<DeleteFile> existingDeletes = task.existingDeletes();
+    return Stream.concat(
+        Stream.of(file), Stream.concat(addedDeletes.stream(), existingDeletes.stream()));
   }
 
   private static Stream<ContentFile<?>> deletedDataFileScanTaskFiles(DeletedDataFileScanTask task) {

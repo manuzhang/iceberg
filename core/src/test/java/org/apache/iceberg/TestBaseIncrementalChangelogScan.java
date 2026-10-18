@@ -248,8 +248,209 @@ public class TestBaseIncrementalChangelogScan
   }
 
   @TestTemplate
+  public void deletionVectorOnExistingFile() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).appendFile(FILE_B).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap1.snapshotId()).toSnapshot(snap2.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap2.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.addedDeletes())
+        .as("Must have the added DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+    assertThat(task.existingDeletes()).as("Must have no existing deletes").isEmpty();
+  }
+
+  @TestTemplate
+  public void replacedDeletionVector() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).commit();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    DeleteFile newDV =
+        FileMetadata.deleteFileBuilder(SPEC)
+            .ofPositionDeletes()
+            .withPath("/path/to/data-a-deletes-2.puffin")
+            .withFileSizeInBytes(10)
+            .withPartitionPath("data_bucket=0")
+            .withRecordCount(2)
+            .withReferencedDataFile(FILE_A.location())
+            .withContentOffset(4)
+            .withContentSizeInBytes(6)
+            .build();
+    table
+        .newRowDelta()
+        .addDeletes(newDV)
+        .removeDeletes(FILE_A_DV)
+        .validateFromSnapshot(snap2.snapshotId())
+        .commit();
+
+    Snapshot snap3 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap2.snapshotId()).toSnapshot(snap3.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap3.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.addedDeletes())
+        .as("Must have the new DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(newDV.location());
+    assertThat(task.existingDeletes())
+        .as("Must have the replaced DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+  }
+
+  @TestTemplate
+  public void deletedRowsTaskWithProjection() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap1.snapshotId()).select("id");
+
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(plan(scan));
+    assertThat(task.spec()).as("Spec must bind to the table schema").isEqualTo(table.spec());
+  }
+
+  @TestTemplate
+  public void deletedRowsTaskWithColumnStats() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_WITH_STATS).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    DeleteFile dv =
+        FileMetadata.deleteFileBuilder(SPEC)
+            .ofPositionDeletes()
+            .withPath("/path/to/data-with-stats-deletes.puffin")
+            .withFileSizeInBytes(10)
+            .withRecordCount(1)
+            .withReferencedDataFile(FILE_WITH_STATS.location())
+            .withContentOffset(4)
+            .withContentSizeInBytes(6)
+            .build();
+    table.newRowDelta().addDeletes(dv).commit();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap1.snapshotId()).includeColumnStats();
+
+    DeletedRowsScanTask task = (DeletedRowsScanTask) Iterables.getOnlyElement(plan(scan));
+    assertThat(task.file().valueCounts())
+        .as("Must keep column stats")
+        .isEqualTo(FILE_WITH_STATS.valueCounts());
+  }
+
+  @TestTemplate
+  public void addedFileWithDeletionVectorInSameSnapshot() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newRowDelta().addRows(FILE_A).addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap1 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotInclusive(snap1.snapshotId()).toSnapshot(snap1.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    AddedRowsScanTask task = (AddedRowsScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap1.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.deletes())
+        .as("Must have the added DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+  }
+
+  @TestTemplate
+  public void deletedFileWithExistingDeletionVector() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    table.newFastAppend().appendFile(FILE_A).commit();
+
+    table.newRowDelta().addDeletes(FILE_A_DV).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    table.newDelete().deleteFile(FILE_A).commit();
+
+    Snapshot snap3 = table.currentSnapshot();
+
+    IncrementalChangelogScan scan =
+        newScan().fromSnapshotExclusive(snap2.snapshotId()).toSnapshot(snap3.snapshotId());
+
+    List<ChangelogScanTask> tasks = plan(scan);
+
+    assertThat(tasks).as("Must have 1 task").hasSize(1);
+
+    DeletedDataFileScanTask task = (DeletedDataFileScanTask) Iterables.getOnlyElement(tasks);
+    assertThat(task.changeOrdinal()).as("Ordinal must match").isEqualTo(0);
+    assertThat(task.commitSnapshotId()).as("Snapshot must match").isEqualTo(snap3.snapshotId());
+    assertThat(task.file().location()).as("Data file must match").isEqualTo(FILE_A.location());
+    assertThat(task.existingDeletes())
+        .as("Must have the existing DV")
+        .extracting(DeleteFile::location)
+        .containsExactly(FILE_A_DV.location());
+  }
+
+  @TestTemplate
+  public void unchangedDeleteFilesAreNotSupported() {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
+
+    table.newFastAppend().appendFile(FILE_A2).appendFile(FILE_B).commit();
+
+    table.newRowDelta().addDeletes(FILE_A2_DELETES).commit();
+
+    Snapshot snap2 = table.currentSnapshot();
+
+    table.newFastAppend().appendFile(FILE_C).commit();
+
+    IncrementalChangelogScan scan = newScan().fromSnapshotExclusive(snap2.snapshotId());
+
+    assertThatThrownBy(() -> plan(scan))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessage("Only deletion vectors in v3 tables are supported in changelog scans");
+  }
+
+  @TestTemplate
   public void testDeleteFilesAreNotSupported() {
-    assumeThat(formatVersion).isEqualTo(2);
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
 
     table.newFastAppend().appendFile(FILE_A2).appendFile(FILE_B).commit();
 
@@ -257,7 +458,7 @@ public class TestBaseIncrementalChangelogScan
 
     assertThatThrownBy(() -> plan(newScan()))
         .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("Delete files are currently not supported in changelog scans");
+        .hasMessage("Only deletion vectors in v3 tables are supported in changelog scans");
   }
 
   // plans tasks and reorders them to have deterministic order
