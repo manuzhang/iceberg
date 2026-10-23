@@ -18,18 +18,26 @@
  */
 package org.apache.iceberg.formats;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.deletes.EqualityDeleteWriter;
 import org.apache.iceberg.deletes.PositionDelete;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.exceptions.RuntimeIOException;
+import org.apache.iceberg.expressions.Expression;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.DataWriter;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -64,9 +72,12 @@ public final class FormatModelRegistry {
   // Format models indexed by file format and object model class
   private static final Map<Pair<FileFormat, Class<?>>, FormatModel<?, ?>> MODELS =
       Maps.newConcurrentMap();
+  private static final Map<Pair<String, Class<?>>, CustomFormatModel<?, ?>> CUSTOM_MODELS =
+      Maps.newConcurrentMap();
 
   static {
     registerSupportedFormats();
+    registerProviders();
   }
 
   /**
@@ -86,6 +97,11 @@ public final class FormatModelRegistry {
    *     {@link FormatModel#format()} and {@link FormatModel#type()}
    */
   public static synchronized void register(FormatModel<?, ?> formatModel) {
+    if (formatModel instanceof CustomFormatModel) {
+      registerCustom((CustomFormatModel<?, ?>) formatModel);
+      return;
+    }
+
     Pair<FileFormat, Class<?>> key = Pair.of(formatModel.format(), formatModel.type());
 
     FormatModel<?, ?> existing = MODELS.get(key);
@@ -99,6 +115,22 @@ public final class FormatModelRegistry {
         existing == null ? null : existing.schemaType());
 
     MODELS.put(key, formatModel);
+  }
+
+  private static void registerCustom(CustomFormatModel<?, ?> formatModel) {
+    String formatName = CustomFileFormat.normalize(formatModel.customFormatName());
+    Pair<String, Class<?>> key = Pair.of(formatName, formatModel.type());
+    CustomFormatModel<?, ?> existing = CUSTOM_MODELS.get(key);
+    Preconditions.checkArgument(
+        existing == null,
+        "Cannot register %s: %s is registered for custom format=%s type=%s schemaType=%s",
+        formatModel.getClass(),
+        existing == null ? null : existing.getClass(),
+        key.first(),
+        key.second(),
+        existing == null ? null : existing.schemaType());
+
+    CUSTOM_MODELS.put(key, formatModel);
   }
 
   /**
@@ -121,6 +153,52 @@ public final class FormatModelRegistry {
   }
 
   /**
+   * Returns a reader builder for the specified file format and object model, resolving custom file
+   * format metadata using the provided {@link FileIO}.
+   *
+   * @param format the file format that determines the parsing implementation
+   * @param type the output type
+   * @param inputFile source file to read data or custom format metadata from
+   * @param io file IO used to resolve custom format metadata locations
+   * @param <D> the type of data records the reader will produce
+   * @param <S> the type of the output schema for the reader
+   * @return a configured reader builder for the specified format and object model
+   */
+  public static <D, S> ReadBuilder<D, S> readBuilder(
+      FileFormat format, Class<? extends D> type, InputFile inputFile, FileIO io) {
+    if (format != FileFormat.CUSTOM) {
+      return readBuilder(format, type, inputFile);
+    }
+
+    try {
+      CustomFileFormat customFormat = CustomFileFormatParser.read(inputFile);
+      ReadBuilder<D, S> builder =
+          customReadBuilder(
+              customFormat.name(), type, io.newInputFile(customFormat.metadataLocation()));
+      return new CustomReadBuilder<>(builder);
+    } catch (IOException e) {
+      throw new RuntimeIOException(
+          e, "Failed to read custom file format metadata: %s", inputFile.location());
+    }
+  }
+
+  /**
+   * Returns a reader builder for the specified custom file format and object model.
+   *
+   * @param customFormatName the custom file format name
+   * @param type the output type
+   * @param inputFile source file to read data from
+   * @param <D> the type of data records the reader will produce
+   * @param <S> the type of the output schema for the reader
+   * @return a configured reader builder for the specified custom format and object model
+   */
+  public static <D, S> ReadBuilder<D, S> customReadBuilder(
+      String customFormatName, Class<? extends D> type, InputFile inputFile) {
+    CustomFormatModel<D, S> model = customModelFor(customFormatName, type);
+    return model.readBuilder(inputFile);
+  }
+
+  /**
    * Returns a writer builder for generating a {@link DataFile}.
    *
    * <p>The returned builder produces a writer that accepts records defined by the specified object
@@ -138,6 +216,22 @@ public final class FormatModelRegistry {
   public static <D, S> FileWriterBuilder<DataWriter<D>, S> dataWriteBuilder(
       FileFormat format, Class<? extends D> type, EncryptedOutputFile outputFile) {
     FormatModel<D, S> model = modelFor(format, type);
+    return FileWriterBuilderImpl.forDataFile(model, outputFile);
+  }
+
+  /**
+   * Returns a writer builder for generating a data file in a custom file format.
+   *
+   * @param customFormatName the custom file format name
+   * @param type the input type
+   * @param outputFile destination for the written data
+   * @param <D> the type of data records the writer will accept
+   * @param <S> the type of the input schema for the writer
+   * @return a configured data write builder for the specified custom format and object model
+   */
+  public static <D, S> FileWriterBuilder<DataWriter<D>, S> customDataWriteBuilder(
+      String customFormatName, Class<? extends D> type, EncryptedOutputFile outputFile) {
+    CustomFormatModel<D, S> model = customModelFor(customFormatName, type);
     return FileWriterBuilderImpl.forDataFile(model, outputFile);
   }
 
@@ -191,6 +285,11 @@ public final class FormatModelRegistry {
     return MODELS;
   }
 
+  @VisibleForTesting
+  static Map<Pair<String, Class<?>>, CustomFormatModel<?, ?>> customModels() {
+    return CUSTOM_MODELS;
+  }
+
   @SuppressWarnings("unchecked")
   private static <D, S> FormatModel<D, S> modelFor(FileFormat format, Class<? extends D> type) {
     FormatModel<D, S> model = (FormatModel<D, S>) MODELS.get(Pair.of(format, type));
@@ -199,11 +298,103 @@ public final class FormatModelRegistry {
     return model;
   }
 
+  @SuppressWarnings("unchecked")
+  private static <D, S> CustomFormatModel<D, S> customModelFor(
+      String customFormatName, Class<? extends D> type) {
+    String formatName = CustomFileFormat.normalize(customFormatName);
+    CustomFormatModel<D, S> model =
+        (CustomFormatModel<D, S>) CUSTOM_MODELS.get(Pair.of(formatName, type));
+    Preconditions.checkArgument(
+        model != null,
+        "Format model is not registered for custom format %s and type %s",
+        formatName,
+        type);
+    return model;
+  }
+
+  private static class CustomReadBuilder<D, S> implements ReadBuilder<D, S> {
+    private final ReadBuilder<D, S> delegate;
+
+    private CustomReadBuilder(ReadBuilder<D, S> delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public ReadBuilder<D, S> split(long start, long length) {
+      // Scan task ranges describe the custom metadata file, not the referenced data file.
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> project(Schema schema) {
+      delegate.project(schema);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> engineProjection(S schema) {
+      delegate.engineProjection(schema);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> caseSensitive(boolean caseSensitive) {
+      delegate.caseSensitive(caseSensitive);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> filter(Expression filter) {
+      delegate.filter(filter);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> set(String key, String value) {
+      delegate.set(key, value);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> reuseContainers() {
+      delegate.reuseContainers();
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> recordsPerBatch(int rowsPerBatch) {
+      delegate.recordsPerBatch(rowsPerBatch);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> idToConstant(Map<Integer, ?> idToConstant) {
+      delegate.idToConstant(idToConstant);
+      return this;
+    }
+
+    @Override
+    public ReadBuilder<D, S> withNameMapping(NameMapping nameMapping) {
+      delegate.withNameMapping(nameMapping);
+      return this;
+    }
+
+    @Override
+    public CloseableIterable<D> build() {
+      return delegate.build();
+    }
+  }
+
   private static void registerSupportedFormats() {
     // Uses dynamic methods to call the `register` for the listed classes
     for (String classToRegister : CLASSES_TO_REGISTER) {
       register(classToRegister);
     }
+  }
+
+  private static void registerProviders() {
+    ServiceLoader.load(FileFormatProvider.class)
+        .forEach(provider -> provider.formatModels().forEach(FormatModelRegistry::register));
   }
 
   /**
