@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.arrow.vectorized;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -27,6 +29,7 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.arrow.ArrowAllocation;
 import org.apache.iceberg.arrow.vectorized.VectorizedArrowReader.ConstantVectorReader;
+import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.parquet.ParquetVariantVisitor;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
 import org.apache.iceberg.parquet.VectorizedReader;
@@ -48,6 +51,7 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
   private final boolean setArrowValidityVector;
   private final Function<List<VectorizedReader<?>>, VectorizedReader<?>> readerFactory;
   private final BiFunction<org.apache.iceberg.types.Type, Object, Object> convert;
+  private MessageType projection = null;
 
   public VectorizedReaderBuilder(
       Schema expectedSchema,
@@ -99,20 +103,32 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
     this.convert = convert;
   }
 
+  /**
+   * Returns whether this builder creates readers for struct, list, and map fields.
+   *
+   * <p>Those readers return {@link VectorHolder.StructVectorHolder}, {@link
+   * VectorHolder.ListVectorHolder}, and {@link VectorHolder.MapVectorHolder}, so a subclass should
+   * return true only if the batch reader it creates handles them.
+   *
+   * @return true if struct, list, and map fields are read, false otherwise
+   */
+  protected boolean supportsNestedTypes() {
+    return false;
+  }
+
   @Override
   public VectorizedReader<?> message(
       Types.StructType expected, MessageType message, List<VectorizedReader<?>> fieldReaders) {
-    GroupType groupType = message.asGroupType();
-    Map<Integer, VectorizedReader<?>> readersById = Maps.newHashMap();
-    List<Type> fields = groupType.getFields();
-
-    IntStream.range(0, fields.size())
-        .filter(pos -> fields.get(pos).getId() != null)
-        .forEach(pos -> readersById.put(fields.get(pos).getId().intValue(), fieldReaders.get(pos)));
-
     List<Types.NestedField> icebergFields =
         expected != null ? expected.fields() : ImmutableList.of();
+    return vectorizedReader(fieldReaders(icebergFields, message, fieldReaders));
+  }
 
+  private List<VectorizedReader<?>> fieldReaders(
+      List<Types.NestedField> icebergFields,
+      GroupType groupType,
+      List<VectorizedReader<?>> fieldReaders) {
+    Map<Integer, VectorizedReader<?>> readersById = readersById(groupType, fieldReaders);
     List<VectorizedReader<?>> reorderedFields =
         Lists.newArrayListWithExpectedSize(icebergFields.size());
 
@@ -122,7 +138,20 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
               field, readersById.get(field.fieldId()), idToConstant, setArrowValidityVector);
       reorderedFields.add(defaultReader(field, reader));
     }
-    return vectorizedReader(reorderedFields);
+
+    return reorderedFields;
+  }
+
+  private static Map<Integer, VectorizedReader<?>> readersById(
+      GroupType groupType, List<VectorizedReader<?>> fieldReaders) {
+    Map<Integer, VectorizedReader<?>> readersById = Maps.newHashMap();
+    List<Type> fields = groupType.getFields();
+
+    IntStream.range(0, fields.size())
+        .filter(pos -> fields.get(pos).getId() != null)
+        .forEach(pos -> readersById.put(fields.get(pos).getId().intValue(), fieldReaders.get(pos)));
+
+    return readersById;
   }
 
   private VectorizedReader<?> defaultReader(Types.NestedField field, VectorizedReader<?> reader) {
@@ -148,11 +177,114 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
   @Override
   public VectorizedReader<?> struct(
       Types.StructType expected, GroupType groupType, List<VectorizedReader<?>> fieldReaders) {
-    if (expected != null) {
+    if (expected == null) {
+      return null;
+    }
+
+    if (!supportsNestedTypes()) {
       throw new UnsupportedOperationException(
           "Vectorized reads are not supported yet for struct fields");
     }
-    return null;
+
+    String[] path = currentPath();
+    Map<Integer, VectorizedReader<?>> readersById = readersById(groupType, fieldReaders);
+    boolean readsField =
+        expected.fields().stream().anyMatch(field -> readersById.get(field.fieldId()) != null);
+    // like the row reader, a struct whose fields read no column uses the column that pruning kept
+    // under it to find whether the struct is present
+    ColumnDescriptor presenceColumn =
+        readsField || parquetSchema.getMaxDefinitionLevel(path) <= 0 ? null : presenceColumn(path);
+
+    return VectorizedNestedReaders.struct(
+        icebergField(groupType),
+        arrowReaders(fieldReaders(expected.fields(), groupType, fieldReaders)),
+        presenceColumn,
+        parquetSchema.getMaxRepetitionLevel(path),
+        parquetSchema.getMaxDefinitionLevel(path));
+  }
+
+  @Override
+  public VectorizedReader<?> list(
+      Types.ListType expected, GroupType array, VectorizedReader<?> elementReader) {
+    if (expected == null || !supportsNestedTypes()) {
+      return super.list(expected, array, elementReader);
+    }
+
+    Types.NestedField icebergField = icebergField(array);
+    VectorizedArrowReader element = (VectorizedArrowReader) elementReader;
+    if (element == null || element.levels() == null) {
+      throw new UnsupportedOperationException(
+          String.format("Cannot read list %s: no column is read for its elements", icebergField));
+    }
+
+    // in a two-level list, the repeated field is the element and is not in the current path
+    Type elementType = ParquetSchemaUtil.determineListElementType(array);
+    String[] repeatedPath =
+        elementType.isRepetition(Type.Repetition.REPEATED)
+            ? path(elementType.getName())
+            : currentPath();
+    return VectorizedNestedReaders.list(
+        icebergField,
+        element,
+        parquetSchema.getMaxRepetitionLevel(repeatedPath) - 1,
+        parquetSchema.getMaxDefinitionLevel(repeatedPath) - 1);
+  }
+
+  @Override
+  public VectorizedReader<?> map(
+      Types.MapType expected,
+      GroupType map,
+      VectorizedReader<?> keyReader,
+      VectorizedReader<?> valueReader) {
+    if (expected == null || !supportsNestedTypes()) {
+      return super.map(expected, map, keyReader, valueReader);
+    }
+
+    Types.NestedField icebergField = icebergField(map);
+    VectorizedArrowReader key = (VectorizedArrowReader) keyReader;
+    if (key == null || key.levels() == null) {
+      throw new UnsupportedOperationException(
+          String.format("Cannot read map %s: no column is read for its keys", icebergField));
+    }
+
+    String[] repeatedPath = currentPath();
+    return VectorizedNestedReaders.map(
+        icebergField,
+        key,
+        (VectorizedArrowReader) defaultReader(expected.fields().get(1), valueReader),
+        parquetSchema.getMaxRepetitionLevel(repeatedPath) - 1,
+        parquetSchema.getMaxDefinitionLevel(repeatedPath) - 1);
+  }
+
+  private Types.NestedField icebergField(GroupType groupType) {
+    return icebergSchema.findField(groupType.getId().intValue());
+  }
+
+  private static List<VectorizedArrowReader> arrowReaders(List<VectorizedReader<?>> readers) {
+    List<VectorizedArrowReader> arrowReaders = Lists.newArrayListWithExpectedSize(readers.size());
+    for (VectorizedReader<?> reader : readers) {
+      arrowReaders.add((VectorizedArrowReader) reader);
+    }
+
+    return arrowReaders;
+  }
+
+  /** Returns the column that pruning kept under a struct whose fields read no column. */
+  private ColumnDescriptor presenceColumn(String[] structPath) {
+    if (projection == null) {
+      this.projection = ParquetSchemaUtil.pruneColumns(parquetSchema, icebergSchema);
+    }
+
+    return projection.getColumns().stream()
+        .filter(column -> isUnder(column.getPath(), structPath))
+        .min(Comparator.comparingInt(ColumnDescriptor::getMaxRepetitionLevel))
+        .map(column -> parquetSchema.getColumnDescription(column.getPath()))
+        .orElse(null);
+  }
+
+  private static boolean isUnder(String[] path, String[] parentPath) {
+    return path.length > parentPath.length
+        && Arrays.equals(path, 0, parentPath.length, parentPath, 0, parentPath.length);
   }
 
   @Override
@@ -164,6 +296,11 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
   @Override
   public VectorizedReader<?> variant(
       Types.VariantType iVariant, GroupType variant, VectorizedReader<?> result) {
+    if (supportsNestedTypes() && currentPath().length > 1) {
+      throw new UnsupportedOperationException(
+          "Vectorized reads are not supported yet for variants in structs, lists, or maps");
+    }
+
     return result;
   }
 
@@ -176,9 +313,11 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
       return null;
     }
     int parquetFieldId = primitive.getId().intValue();
-    ColumnDescriptor desc = parquetSchema.getColumnDescription(currentPath());
-    // Nested types not yet supported for vectorized reads
-    if (desc.getMaxRepetitionLevel() > 0) {
+    String[] path = currentPath();
+    ColumnDescriptor desc = parquetSchema.getColumnDescription(path);
+    // Nested types are only supported for vectorized reads when the subclass supports them
+    boolean readsLevels = supportsNestedTypes() && path.length > 1;
+    if (desc.getMaxRepetitionLevel() > 0 && !readsLevels) {
       return null;
     }
     Types.NestedField icebergField = icebergSchema.findField(parquetFieldId);
@@ -186,6 +325,7 @@ public class VectorizedReaderBuilder extends TypeWithSchemaVisitor<VectorizedRea
       return null;
     }
     // Set the validity buffer if null checking is enabled in arrow
-    return new VectorizedArrowReader(desc, icebergField, rootAllocator, setArrowValidityVector);
+    return new VectorizedArrowReader(
+        desc, icebergField, rootAllocator, setArrowValidityVector, readsLevels);
   }
 }

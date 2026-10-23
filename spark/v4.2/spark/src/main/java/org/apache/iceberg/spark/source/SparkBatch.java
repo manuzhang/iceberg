@@ -153,8 +153,9 @@ class SparkBatch implements Batch {
 
   // conditions for using Parquet batch reads:
   // - Parquet vectorization is enabled
-  // - only primitives, unshredded variant, or metadata columns are projected, excluding geometry
-  //   and geography which are primitives with no Arrow vector yet
+  // - only primitives, structs, lists, and maps of primitives, top-level unshredded variant, or
+  //   metadata columns are projected, excluding geometry and geography which are primitives with
+  //   no Arrow vector yet
   // - all tasks are of FileScanTask type and read only Parquet files
   private boolean useParquetBatchReads() {
     return readConf.parquetVectorizationEnabled()
@@ -193,12 +194,6 @@ class SparkBatch implements Batch {
     }
 
     Type type = field.type();
-    // Geometry and geography are primitive types but have no Arrow vector yet, so they must be
-    // read through the non-vectorized reader.
-    if (type.typeId() == Type.TypeID.GEOMETRY || type.typeId() == Type.TypeID.GEOGRAPHY) {
-      return false;
-    }
-
     if (type.isVariantType()) {
       boolean shredVariants =
           PropertyUtil.propertyAsBoolean(
@@ -216,7 +211,20 @@ class SparkBatch implements Batch {
       }
     }
 
-    return type.isPrimitiveType() || type.isVariantType();
+    return type.isVariantType() || supportsParquetBatchReads(type);
+  }
+
+  private static boolean supportsParquetBatchReads(Type type) {
+    if (type.isNestedType()) {
+      return type.asNestedType().fields().stream()
+          .allMatch(nested -> supportsParquetBatchReads(nested.type()));
+    }
+
+    // Geometry and geography are primitive types but have no Arrow vector yet, so they must be
+    // read through the non-vectorized reader.
+    return type.isPrimitiveType()
+        && type.typeId() != Type.TypeID.GEOMETRY
+        && type.typeId() != Type.TypeID.GEOGRAPHY;
   }
 
   // conditions for using ORC batch reads:

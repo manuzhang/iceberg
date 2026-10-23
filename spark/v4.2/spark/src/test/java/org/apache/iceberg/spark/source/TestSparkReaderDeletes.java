@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.source;
 
 import static org.apache.hadoop.hive.conf.HiveConf.ConfVars.METASTOREURIS;
 import static org.apache.iceberg.spark.source.SparkSQLExecutionHelper.lastExecutedMetricValue;
+import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.apache.spark.sql.types.DataTypes.IntegerType;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,6 +61,7 @@ import org.apache.iceberg.data.DeleteReadTests;
 import org.apache.iceberg.data.FileHelpers;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.InternalRecordWrapper;
+import org.apache.iceberg.data.RandomGenericData;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.hive.HiveCatalog;
@@ -76,6 +78,7 @@ import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkStructLike;
 import org.apache.iceberg.spark.TestBase;
+import org.apache.iceberg.spark.data.GenericsHelpers;
 import org.apache.iceberg.spark.data.RandomData;
 import org.apache.iceberg.spark.data.SparkParquetWriters;
 import org.apache.iceberg.spark.source.metrics.NumDeletes;
@@ -164,6 +167,7 @@ public class TestSparkReaderDeletes extends DeleteReadTests {
   }
 
   private static final String EQ_CACHE_TABLE = "test_eq_cache_ordering";
+  private static final String NESTED_TABLE = "test_nested_pos_deletes";
 
   @AfterEach
   @Override
@@ -171,6 +175,7 @@ public class TestSparkReaderDeletes extends DeleteReadTests {
     super.cleanup();
     dropTable("test3");
     dropTable(EQ_CACHE_TABLE);
+    dropTable(NESTED_TABLE);
   }
 
   @Override
@@ -379,6 +384,69 @@ public class TestSparkReaderDeletes extends DeleteReadTests {
 
     assertThat(actual).as("Table should contain expected rows").isEqualTo(expected);
     checkDeleteCount(4L);
+  }
+
+  @TestTemplate
+  void posDeletesOnNestedColumns() throws IOException {
+    Schema nestedSchema =
+        new Schema(
+            required(1, "id", Types.IntegerType.get()),
+            optional(
+                2,
+                "point",
+                Types.StructType.of(
+                    required(3, "x", Types.DoubleType.get()),
+                    optional(4, "y", Types.DoubleType.get()))),
+            optional(5, "scores", Types.ListType.ofOptional(6, Types.LongType.get())),
+            optional(
+                7,
+                "attributes",
+                Types.MapType.ofOptional(8, 9, Types.StringType.get(), Types.StringType.get())));
+    Table nestedTable = createTable(NESTED_TABLE, nestedSchema, PartitionSpec.unpartitioned());
+
+    List<Record> nestedRecords =
+        Lists.newArrayList(RandomGenericData.generate(nestedSchema, 7, 0L));
+    DataFile nestedFile =
+        FileHelpers.writeDataFile(
+            nestedTable,
+            Files.localOutput(File.createTempFile("junit", null, temp.toFile())),
+            nestedRecords);
+    nestedTable.newAppend().appendFile(nestedFile).commit();
+
+    // vectorized batches hold 4 rows, so the deleted rows are in both batches
+    List<Pair<CharSequence, Long>> deletes =
+        Lists.newArrayList(
+            Pair.of(nestedFile.location(), 1L),
+            Pair.of(nestedFile.location(), 4L),
+            Pair.of(nestedFile.location(), 5L));
+    Pair<DeleteFile, CharSequenceSet> posDeletes =
+        FileHelpers.writeDeleteFile(
+            nestedTable,
+            Files.localOutput(File.createTempFile("junit", null, temp.toFile())),
+            deletes,
+            formatVersion);
+    nestedTable
+        .newRowDelta()
+        .addDeletes(posDeletes.first())
+        .validateDataFilesExist(posDeletes.second())
+        .commit();
+
+    Dataset<Row> df =
+        spark.read().format("iceberg").load(TableIdentifier.of("default", NESTED_TABLE).toString());
+    if (vectorized) {
+      assertThat(df.queryExecution().executedPlan().toString())
+          .as("Nested columns should be read in batches")
+          .contains("ColumnarToRow");
+    }
+
+    List<Record> expected =
+        Lists.newArrayList(
+            nestedRecords.get(0), nestedRecords.get(2), nestedRecords.get(3), nestedRecords.get(6));
+    List<Row> actual = df.collectAsList();
+    assertThat(actual).hasSize(expected.size());
+    for (int pos = 0; pos < expected.size(); pos += 1) {
+      GenericsHelpers.assertEqualsSafe(nestedSchema.asStruct(), expected.get(pos), actual.get(pos));
+    }
   }
 
   @TestTemplate

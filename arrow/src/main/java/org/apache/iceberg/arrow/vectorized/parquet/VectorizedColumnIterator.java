@@ -39,12 +39,25 @@ public class VectorizedColumnIterator extends BaseColumnIterator {
 
   public VectorizedColumnIterator(
       ColumnDescriptor desc, String writerVersion, boolean setArrowValidityVector) {
+    this(desc, writerVersion, setArrowValidityVector, false);
+  }
+
+  /**
+   * Creates a column iterator that, when {@code readsLevels} is true, reads values by whole rows
+   * together with their repetition and definition levels, so that it can read columns nested in
+   * structs, lists, and maps.
+   */
+  public VectorizedColumnIterator(
+      ColumnDescriptor desc,
+      String writerVersion,
+      boolean setArrowValidityVector,
+      boolean readsLevels) {
     super(desc);
     Preconditions.checkArgument(
-        desc.getMaxRepetitionLevel() == 0,
+        readsLevels || desc.getMaxRepetitionLevel() == 0,
         "Only non-nested columns are supported for vectorized reads");
     this.vectorizedPageIterator =
-        new VectorizedPageIterator(desc, writerVersion, setArrowValidityVector);
+        new VectorizedPageIterator(desc, writerVersion, setArrowValidityVector, readsLevels);
   }
 
   public void setBatchSize(int batchSize) {
@@ -68,6 +81,47 @@ public class VectorizedColumnIterator extends BaseColumnIterator {
     return vectorizedPageIterator.producesDictionaryEncodedVector();
   }
 
+  /**
+   * Reads the levels of the values in the next {@code numRows} rows, without reading the values.
+   *
+   * @param levels the holder that receives the levels
+   * @param numRows the number of rows to read
+   */
+  public void nextLevels(LevelsHolder levels, int numRows) {
+    levels.reset();
+    int numValues = nextRowValues(levels, numRows);
+    while (numValues > 0) {
+      vectorizedPageIterator.skipValues(numValues);
+      triplesRead += numValues;
+      numValues = nextRowValues(levels, numRows);
+    }
+  }
+
+  /**
+   * Moves to the values of the rows that are still needed to complete a batch of {@code numRows}
+   * rows and adds their levels to the holder.
+   *
+   * @return the number of values to read from the current page, or 0 if the batch is complete
+   */
+  private int nextRowValues(LevelsHolder levels, int numRows) {
+    if (!hasNext()) {
+      return 0;
+    }
+
+    advance();
+    int numValues = vectorizedPageIterator.valueCount(numRows - levels.numRows());
+    vectorizedPageIterator.appendLevels(levels, numValues);
+    return numValues;
+  }
+
+  private static void ensureCapacity(FieldVector vector, NullabilityHolder holder, int numValues) {
+    while (vector.getValueCapacity() < numValues) {
+      vector.reAlloc();
+    }
+
+    holder.ensureCapacity(numValues);
+  }
+
   public abstract class BatchReader {
     public void nextBatch(FieldVector fieldVector, int typeWidth, NullabilityHolder holder) {
       int rowsReadSoFar = 0;
@@ -78,6 +132,36 @@ public class VectorizedColumnIterator extends BaseColumnIterator {
         rowsReadSoFar += rowsInThisBatch;
         triplesRead += rowsInThisBatch;
         fieldVector.setValueCount(rowsReadSoFar);
+      }
+    }
+
+    /**
+     * Reads the values of the next {@code numRows} rows and their levels. A row of a repeated
+     * column can have any number of values, so the vector and the nullability holder grow to fit
+     * them.
+     *
+     * @param vector the vector that receives the values, starting at index 0
+     * @param typeWidth the width of a value in bytes, or -1 for variable width values
+     * @param holder the holder that receives the nullability of the values
+     * @param levels the holder that receives the levels of the values
+     * @param numRows the number of rows to read
+     */
+    public void nextBatch(
+        FieldVector vector,
+        int typeWidth,
+        NullabilityHolder holder,
+        LevelsHolder levels,
+        int numRows) {
+      levels.reset();
+      int valuesReadSoFar = 0;
+      int numValues = nextRowValues(levels, numRows);
+      while (numValues > 0) {
+        ensureCapacity(vector, holder, valuesReadSoFar + numValues);
+        nextBatchOf(vector, numValues, valuesReadSoFar, typeWidth, holder);
+        valuesReadSoFar += numValues;
+        triplesRead += numValues;
+        vector.setValueCount(valuesReadSoFar);
+        numValues = nextRowValues(levels, numRows);
       }
     }
 

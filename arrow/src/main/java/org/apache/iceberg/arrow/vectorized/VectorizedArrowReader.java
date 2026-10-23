@@ -43,6 +43,7 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.arrow.ArrowAllocation;
 import org.apache.iceberg.arrow.ArrowSchemaUtil;
+import org.apache.iceberg.arrow.vectorized.parquet.LevelsHolder;
 import org.apache.iceberg.arrow.vectorized.parquet.VectorizedColumnIterator;
 import org.apache.iceberg.parquet.ParquetUtil;
 import org.apache.iceberg.parquet.VectorizedReader;
@@ -70,6 +71,7 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
   private final VectorizedColumnIterator vectorizedColumnIterator;
   private final Types.NestedField icebergField;
   private final BufferAllocator rootAlloc;
+  private final LevelsHolder levels;
 
   private int batchSize;
   private FieldVector vec;
@@ -89,22 +91,39 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
       Types.NestedField icebergField,
       BufferAllocator ra,
       boolean setArrowValidityVector) {
+    this(desc, icebergField, ra, setArrowValidityVector, false);
+  }
+
+  /**
+   * Creates a reader that, when {@code readsLevels} is true, reads a column nested in structs,
+   * lists, or maps. It reads all values of the rows it is asked to read, which can be more values
+   * than rows, and keeps their levels so that the nested readers can assemble them.
+   */
+  VectorizedArrowReader(
+      ColumnDescriptor desc,
+      Types.NestedField icebergField,
+      BufferAllocator ra,
+      boolean setArrowValidityVector,
+      boolean readsLevels) {
     this.icebergField = icebergField;
     this.columnDescriptor = desc;
     this.rootAlloc = ra;
-    this.vectorizedColumnIterator = new VectorizedColumnIterator(desc, "", setArrowValidityVector);
+    this.vectorizedColumnIterator =
+        new VectorizedColumnIterator(desc, "", setArrowValidityVector, readsLevels);
+    this.levels = readsLevels ? new LevelsHolder() : null;
   }
 
   private VectorizedArrowReader() {
     this(null);
   }
 
-  private VectorizedArrowReader(Types.NestedField icebergField) {
+  VectorizedArrowReader(Types.NestedField icebergField) {
     this.icebergField = icebergField;
     this.batchSize = DEFAULT_BATCH_SIZE;
     this.columnDescriptor = null;
     this.rootAlloc = null;
     this.vectorizedColumnIterator = null;
+    this.levels = null;
   }
 
   private enum ReadType {
@@ -128,6 +147,14 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
 
   protected Types.NestedField icebergField() {
     return icebergField;
+  }
+
+  /**
+   * Returns the levels of the values read by the last call to {@link #read(VectorHolder, int)}, or
+   * null if this reader does not read a column nested in structs, lists, or maps.
+   */
+  LevelsHolder levels() {
+    return levels;
   }
 
   @Override
@@ -154,67 +181,40 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
       vec.setValueCount(0);
       nullabilityHolder.reset();
     }
-    if (vectorizedColumnIterator.hasNext()) {
-      if (dictEncoded) {
-        vectorizedColumnIterator.dictionaryBatchReader().nextBatch(vec, -1, nullabilityHolder);
-      } else {
-        switch (readType) {
-          case VARBINARY:
-          case VARCHAR:
-            vectorizedColumnIterator
-                .varWidthTypeBatchReader()
-                .nextBatch(vec, -1, nullabilityHolder);
-            break;
-          case BOOLEAN:
-            vectorizedColumnIterator.booleanBatchReader().nextBatch(vec, -1, nullabilityHolder);
-            break;
-          case INT:
-          case INT_BACKED_DECIMAL:
-            vectorizedColumnIterator
-                .integerBatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case LONG:
-          case LONG_BACKED_DECIMAL:
-            vectorizedColumnIterator.longBatchReader().nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case FLOAT:
-            vectorizedColumnIterator
-                .floatBatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case DOUBLE:
-            vectorizedColumnIterator
-                .doubleBatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case TIMESTAMP_MILLIS:
-            vectorizedColumnIterator
-                .timestampMillisBatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case TIMESTAMP_INT96:
-            vectorizedColumnIterator
-                .timestampInt96BatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-          case UUID:
-          case FIXED_WIDTH_BINARY:
-          case FIXED_LENGTH_DECIMAL:
-            vectorizedColumnIterator
-                .fixedSizeBinaryBatchReader()
-                .nextBatch(vec, typeWidth, nullabilityHolder);
-            break;
-        }
+    // variable width, boolean, and dictionary id values are read without a fixed width
+    int width = typeWidth != null && readType != ReadType.DICTIONARY ? typeWidth : -1;
+    if (levels != null) {
+      batchReader().nextBatch(vec, width, nullabilityHolder, levels, numValsToRead);
+    } else {
+      if (vectorizedColumnIterator.hasNext()) {
+        batchReader().nextBatch(vec, width, nullabilityHolder);
       }
+
+      Preconditions.checkState(
+          vec.getValueCount() == numValsToRead,
+          "Number of values read, %s, does not equal expected, %s",
+          vec.getValueCount(),
+          numValsToRead);
     }
-    Preconditions.checkState(
-        vec.getValueCount() == numValsToRead,
-        "Number of values read, %s, does not equal expected, %s",
-        vec.getValueCount(),
-        numValsToRead);
+
     return new VectorHolder(
         columnDescriptor, vec, dictEncoded, dictionary, nullabilityHolder, icebergField);
+  }
+
+  private VectorizedColumnIterator.BatchReader batchReader() {
+    return switch (readType) {
+      case DICTIONARY -> vectorizedColumnIterator.dictionaryBatchReader();
+      case VARBINARY, VARCHAR -> vectorizedColumnIterator.varWidthTypeBatchReader();
+      case BOOLEAN -> vectorizedColumnIterator.booleanBatchReader();
+      case INT, INT_BACKED_DECIMAL -> vectorizedColumnIterator.integerBatchReader();
+      case LONG, LONG_BACKED_DECIMAL, TIME_MICROS -> vectorizedColumnIterator.longBatchReader();
+      case FLOAT -> vectorizedColumnIterator.floatBatchReader();
+      case DOUBLE -> vectorizedColumnIterator.doubleBatchReader();
+      case TIMESTAMP_MILLIS -> vectorizedColumnIterator.timestampMillisBatchReader();
+      case TIMESTAMP_INT96 -> vectorizedColumnIterator.timestampInt96BatchReader();
+      case UUID, FIXED_WIDTH_BINARY, FIXED_LENGTH_DECIMAL ->
+          vectorizedColumnIterator.fixedSizeBinaryBatchReader();
+    };
   }
 
   private void allocateFieldVector(boolean dictionaryEncodedVector) {

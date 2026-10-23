@@ -27,10 +27,10 @@ import java.util.Arrays;
  * with monotonically increasing values for the index parameter.
  */
 public class NullabilityHolder {
-  private final byte[] isNull;
+  private byte[] isNull;
   private int numNulls;
-  private final byte[] nonNulls;
-  private final byte[] nulls;
+  private byte[] nonNulls;
+  private byte[] nulls;
 
   public NullabilityHolder(int size) {
     this.isNull = new byte[size];
@@ -42,6 +42,22 @@ public class NullabilityHolder {
 
   public int size() {
     return isNull.length;
+  }
+
+  /**
+   * Grows this holder so that it can track at least {@code size} values, keeping the values that
+   * are already set.
+   *
+   * @param size the minimum number of values to track
+   */
+  public void ensureCapacity(int size) {
+    if (size > isNull.length) {
+      int newSize = Math.max(size, isNull.length * 2);
+      this.isNull = Arrays.copyOf(isNull, newSize);
+      this.nonNulls = new byte[newSize];
+      this.nulls = new byte[newSize];
+      Arrays.fill(nulls, (byte) 1);
+    }
   }
 
   public void setNull(int index) {

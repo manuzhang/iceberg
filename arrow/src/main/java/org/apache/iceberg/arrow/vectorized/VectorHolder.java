@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.arrow.vectorized;
 
+import java.util.List;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -183,6 +184,127 @@ public class VectorHolder {
     @Override
     public int numValues() {
       return numRows;
+    }
+  }
+
+  /**
+   * A holder for a batch of structs. The holder of each field has a value for every struct, and the
+   * nullability holder tracks which structs are null.
+   */
+  public static class StructVectorHolder extends VectorHolder {
+    private final List<VectorHolder> fieldHolders;
+    private final int numRows;
+
+    public StructVectorHolder(
+        Types.NestedField icebergField,
+        int numRows,
+        List<VectorHolder> fieldHolders,
+        NullabilityHolder nulls) {
+      super(null, icebergField, nulls);
+      this.numRows = numRows;
+      this.fieldHolders = fieldHolders;
+    }
+
+    @Override
+    public int numValues() {
+      return numRows;
+    }
+
+    public List<VectorHolder> fieldHolders() {
+      return fieldHolders;
+    }
+  }
+
+  /**
+   * A holder for a batch of lists. The elements of a list are the values of the element holder from
+   * {@link #offset(int)} to {@link #offset(int)} + {@link #length(int)}, and the nullability holder
+   * tracks which lists are null.
+   */
+  public static class ListVectorHolder extends VectorHolder {
+    private final VectorHolder elementHolder;
+    private final int[] offsets;
+    private final int[] lengths;
+    private final int numRows;
+
+    public ListVectorHolder(
+        Types.NestedField icebergField,
+        int numRows,
+        VectorHolder elementHolder,
+        int[] offsets,
+        int[] lengths,
+        NullabilityHolder nulls) {
+      super(null, icebergField, nulls);
+      this.numRows = numRows;
+      this.elementHolder = elementHolder;
+      this.offsets = offsets;
+      this.lengths = lengths;
+    }
+
+    @Override
+    public int numValues() {
+      return numRows;
+    }
+
+    public VectorHolder elementHolder() {
+      return elementHolder;
+    }
+
+    public int offset(int rowId) {
+      return offsets[rowId];
+    }
+
+    public int length(int rowId) {
+      return lengths[rowId];
+    }
+  }
+
+  /**
+   * A holder for a batch of maps. The entries of a map are the values of the key and value holders
+   * from {@link #offset(int)} to {@link #offset(int)} + {@link #length(int)}, and the nullability
+   * holder tracks which maps are null.
+   */
+  public static class MapVectorHolder extends VectorHolder {
+    private final VectorHolder keyHolder;
+    private final VectorHolder valueHolder;
+    private final int[] offsets;
+    private final int[] lengths;
+    private final int numRows;
+
+    public MapVectorHolder(
+        Types.NestedField icebergField,
+        int numRows,
+        VectorHolder keyHolder,
+        VectorHolder valueHolder,
+        int[] offsets,
+        int[] lengths,
+        NullabilityHolder nulls) {
+      super(null, icebergField, nulls);
+      this.numRows = numRows;
+      this.keyHolder = keyHolder;
+      this.valueHolder = valueHolder;
+      this.offsets = offsets;
+      this.lengths = lengths;
+    }
+
+    @Override
+    public int numValues() {
+      return numRows;
+    }
+
+    public VectorHolder keyHolder() {
+      return keyHolder;
+    }
+
+    public VectorHolder valueHolder() {
+      return valueHolder;
+    }
+
+    public int offset(int rowId) {
+      return offsets[rowId];
+    }
+
+    public int length(int rowId) {
+      return lengths[rowId];
     }
   }
 
