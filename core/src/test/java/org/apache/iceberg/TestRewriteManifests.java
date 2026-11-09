@@ -727,6 +727,84 @@ public class TestRewriteManifests extends TestBase {
   }
 
   @TestTemplate
+  public void testReplaceStagedManifestAfterTransactionRetry() throws IOException {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
+
+    Transaction txn = table.newTransaction();
+    txn.newFastAppend().appendFile(FILE_A).commit();
+
+    Snapshot stagedAppend = txn.table().currentSnapshot();
+    List<ManifestFile> stagedManifests = stagedAppend.allManifests(table.io());
+    assertThat(stagedManifests).hasSize(1);
+    ManifestFile stagedManifest = stagedManifests.get(0);
+
+    // copy the staged manifest's entries with the metadata they inherit in this attempt
+    File replacementFile = temp.resolve(manifestFormat().addExtension("replacement")).toFile();
+    ManifestWriter<DataFile> writer =
+        ManifestFiles.write(
+            formatVersion,
+            table.spec(),
+            table.io().newOutputFile(replacementFile.getCanonicalPath()),
+            null);
+    try (ManifestReader<DataFile> reader =
+        ManifestFiles.read(stagedManifest, table.io(), table.specs())) {
+      for (ManifestEntry<DataFile> entry : reader.entries()) {
+        writer.existing(
+            entry.file(),
+            entry.snapshotId(),
+            entry.dataSequenceNumber(),
+            entry.fileSequenceNumber());
+      }
+    } finally {
+      writer.close();
+    }
+
+    txn.rewriteManifests()
+        .deleteManifest(stagedManifest)
+        .addManifest(writer.toManifestFile())
+        .commit();
+
+    // a concurrent commit forces the transaction to retry, which reuses the staged manifest
+    // but assigns it a new sequence number and first row ID
+    table.newFastAppend().appendFile(FILE_B).commit();
+    Snapshot concurrentAppend = table.currentSnapshot();
+
+    txn.commitTransaction();
+
+    Snapshot committedAppend = table.snapshot(stagedAppend.snapshotId());
+    assertThat(committedAppend.sequenceNumber()).isGreaterThan(concurrentAppend.sequenceNumber());
+
+    ManifestEntry<DataFile> fileAEntry = liveEntry(table.currentSnapshot(), FILE_A);
+    assertThat(fileAEntry.snapshotId()).isEqualTo(committedAppend.snapshotId());
+
+    if (formatVersion >= 3) {
+      ManifestEntry<DataFile> fileBEntry = liveEntry(table.currentSnapshot(), FILE_B);
+      assertThat(fileAEntry.file().firstRowId())
+          .as("FILE_A row IDs must not overlap the concurrently committed FILE_B row IDs")
+          .isGreaterThanOrEqualTo(fileBEntry.file().firstRowId() + FILE_B.recordCount());
+    }
+
+    assertThat(fileAEntry.dataSequenceNumber())
+        .as("FILE_A data sequence number should match the snapshot that added it")
+        .isEqualTo(committedAppend.sequenceNumber());
+  }
+
+  private ManifestEntry<DataFile> liveEntry(Snapshot snapshot, DataFile file) throws IOException {
+    for (ManifestFile manifest : snapshot.dataManifests(table.io())) {
+      try (ManifestReader<DataFile> reader =
+          ManifestFiles.read(manifest, table.io(), table.specs())) {
+        for (ManifestEntry<DataFile> entry : reader.liveEntries()) {
+          if (entry.file().location().equals(file.location())) {
+            return entry.copy();
+          }
+        }
+      }
+    }
+
+    throw new AssertionError("Cannot find live entry for " + file.location());
+  }
+
+  @TestTemplate
   public void testManifestReplacementConcurrentDelete() throws IOException {
     assertThat(table.currentSnapshot()).isNull();
 
