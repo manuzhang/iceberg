@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.spark.data.vectorized;
 
+import java.util.List;
 import org.apache.iceberg.arrow.vectorized.VectorHolder;
 import org.apache.iceberg.arrow.vectorized.VectorHolder.ConstantVectorHolder;
 import org.apache.iceberg.types.Type;
@@ -27,7 +28,20 @@ import org.apache.spark.sql.vectorized.ColumnVector;
 class ColumnVectorBuilder {
 
   public ColumnVector build(VectorHolder holder, int numRows) {
-    if (holder instanceof VectorHolder.VariantVectorHolder) {
+    if (holder instanceof VectorHolder.StructVectorHolder structHolder) {
+      List<VectorHolder> fieldHolders = structHolder.fieldHolders();
+      ColumnVector[] fields = new ColumnVector[fieldHolders.size()];
+      for (int pos = 0; pos < fields.length; pos += 1) {
+        fields[pos] = build(fieldHolders.get(pos));
+      }
+
+      return new StructColumnVector(structHolder, fields);
+    } else if (holder instanceof VectorHolder.ListVectorHolder listHolder) {
+      return new ListColumnVector(listHolder, build(listHolder.elementHolder()));
+    } else if (holder instanceof VectorHolder.MapVectorHolder mapHolder) {
+      return new MapColumnVector(
+          mapHolder, build(mapHolder.keyHolder()), build(mapHolder.valueHolder()));
+    } else if (holder instanceof VectorHolder.VariantVectorHolder) {
       return new VariantColumnVector((VectorHolder.VariantVectorHolder) holder);
     } else if (holder.isDummy()) {
       if (holder instanceof VectorHolder.DeletedVectorHolder) {
@@ -43,5 +57,9 @@ class ColumnVectorBuilder {
     } else {
       return new IcebergArrowColumnVector(holder);
     }
+  }
+
+  private ColumnVector build(VectorHolder holder) {
+    return build(holder, holder.numValues());
   }
 }

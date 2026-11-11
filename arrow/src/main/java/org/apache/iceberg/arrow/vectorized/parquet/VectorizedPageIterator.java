@@ -19,6 +19,8 @@
 package org.apache.iceberg.arrow.vectorized.parquet;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.iceberg.arrow.vectorized.NullabilityHolder;
@@ -26,6 +28,7 @@ import org.apache.iceberg.parquet.BasePageIterator;
 import org.apache.iceberg.parquet.ParquetUtil;
 import org.apache.parquet.CorruptDeltaByteArrays;
 import org.apache.parquet.bytes.ByteBufferInputStream;
+import org.apache.parquet.bytes.BytesInput;
 import org.apache.parquet.bytes.BytesUtils;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.Encoding;
@@ -33,22 +36,38 @@ import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.values.RequiresPreviousReader;
 import org.apache.parquet.column.values.ValuesReader;
+import org.apache.parquet.column.values.rle.RunLengthBitPackingHybridDecoder;
 import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.schema.PrimitiveType;
 
 public class VectorizedPageIterator extends BasePageIterator {
   private final boolean setArrowValidityVector;
+  private final boolean readsLevels;
 
   public VectorizedPageIterator(
       ColumnDescriptor desc, String writerVersion, boolean setValidityVector) {
+    this(desc, writerVersion, setValidityVector, false);
+  }
+
+  /**
+   * Creates a page iterator that, when {@code readsLevels} is true, also keeps the repetition and
+   * definition level of every value in the current page.
+   */
+  public VectorizedPageIterator(
+      ColumnDescriptor desc, String writerVersion, boolean setValidityVector, boolean readsLevels) {
     super(desc, writerVersion);
     this.setArrowValidityVector = setValidityVector;
+    this.readsLevels = readsLevels;
   }
 
   private VectorizedValuesReader valuesReader = null;
   private VectorizedDictionaryEncodedParquetValuesReader dictionaryEncodedValuesReader = null;
   private boolean allPagesDictEncoded;
   private VectorizedParquetDefinitionLevelReader vectorizedDefinitionLevelReader;
+  // levels of every value in the current page, when readsLevels is set; repetition levels are
+  // null for columns that are not repeated
+  private int[] pageRepetitionLevels = null;
+  private int[] pageDefinitionLevels = null;
 
   private enum DictionaryDecodeMode {
     NONE, // plain encoding
@@ -141,14 +160,62 @@ public class VectorizedPageIterator extends BasePageIterator {
   }
 
   @Override
+  protected void initRepetitionLevelsReader(
+      DataPageV1 dataPageV1, ColumnDescriptor desc, ByteBufferInputStream in, int triplesCount)
+      throws IOException {
+    if (readsRepetitionLevels()) {
+      ByteBuffer levels = in.slice(BytesUtils.readIntLittleEndian(in));
+      this.pageRepetitionLevels =
+          decodeLevels(pageRepetitionLevels, desc.getMaxRepetitionLevel(), triplesCount, levels);
+    } else {
+      super.initRepetitionLevelsReader(dataPageV1, desc, in, triplesCount);
+    }
+  }
+
+  @Override
+  protected void initRepetitionLevelsReader(DataPageV2 dataPageV2, ColumnDescriptor desc)
+      throws IOException {
+    if (readsRepetitionLevels()) {
+      this.pageRepetitionLevels =
+          decodeLevels(
+              pageRepetitionLevels,
+              desc.getMaxRepetitionLevel(),
+              dataPageV2.getValueCount(),
+              levelBytes(dataPageV2.getRepetitionLevels()));
+    } else {
+      super.initRepetitionLevelsReader(dataPageV2, desc);
+    }
+  }
+
+  private boolean readsRepetitionLevels() {
+    return readsLevels && desc.getMaxRepetitionLevel() > 0;
+  }
+
+  @Override
   protected void initDefinitionLevelsReader(
       DataPageV1 dataPageV1, ColumnDescriptor desc, ByteBufferInputStream in, int triplesCount)
       throws IOException {
     int bitWidth = BytesUtils.getWidthFromMaxInt(desc.getMaxDefinitionLevel());
-    this.vectorizedDefinitionLevelReader =
-        new VectorizedParquetDefinitionLevelReader(
-            bitWidth, desc.getMaxDefinitionLevel(), setArrowValidityVector);
-    this.vectorizedDefinitionLevelReader.initFromPage(triplesCount, in);
+    if (readsLevels && bitWidth > 0) {
+      // the levels are decoded twice, once to keep them and once while reading values
+      ByteBuffer levels = in.slice(BytesUtils.readIntLittleEndian(in));
+      this.vectorizedDefinitionLevelReader =
+          new VectorizedParquetDefinitionLevelReader(
+              bitWidth, desc.getMaxDefinitionLevel(), false, setArrowValidityVector);
+      vectorizedDefinitionLevelReader.initFromPage(
+          triplesCount, ByteBufferInputStream.wrap(levels.duplicate()));
+      this.pageDefinitionLevels =
+          decodeLevels(
+              pageDefinitionLevels, desc.getMaxDefinitionLevel(), triplesCount, levels.duplicate());
+    } else {
+      this.vectorizedDefinitionLevelReader =
+          new VectorizedParquetDefinitionLevelReader(
+              bitWidth, desc.getMaxDefinitionLevel(), setArrowValidityVector);
+      this.vectorizedDefinitionLevelReader.initFromPage(triplesCount, in);
+      if (readsLevels) {
+        this.pageDefinitionLevels = decodeLevels(pageDefinitionLevels, 0, triplesCount, null);
+      }
+    }
   }
 
   @Override
@@ -159,8 +226,83 @@ public class VectorizedPageIterator extends BasePageIterator {
     this.vectorizedDefinitionLevelReader =
         new VectorizedParquetDefinitionLevelReader(
             bitWidth, desc.getMaxDefinitionLevel(), false, setArrowValidityVector);
-    this.vectorizedDefinitionLevelReader.initFromPage(
-        dataPageV2.getValueCount(), dataPageV2.getDefinitionLevels().toInputStream());
+    if (readsLevels) {
+      ByteBuffer levels = levelBytes(dataPageV2.getDefinitionLevels());
+      vectorizedDefinitionLevelReader.initFromPage(
+          dataPageV2.getValueCount(), ByteBufferInputStream.wrap(levels.duplicate()));
+      this.pageDefinitionLevels =
+          decodeLevels(
+              pageDefinitionLevels,
+              desc.getMaxDefinitionLevel(),
+              dataPageV2.getValueCount(),
+              levels.duplicate());
+    } else {
+      this.vectorizedDefinitionLevelReader.initFromPage(
+          dataPageV2.getValueCount(), dataPageV2.getDefinitionLevels().toInputStream());
+    }
+  }
+
+  private static int[] decodeLevels(int[] reuse, int maxLevel, int count, ByteBuffer levels)
+      throws IOException {
+    int[] decoded = levelsBuffer(reuse, count);
+    if (maxLevel == 0) {
+      Arrays.fill(decoded, 0, count, 0);
+      return decoded;
+    }
+
+    RunLengthBitPackingHybridDecoder decoder =
+        new RunLengthBitPackingHybridDecoder(
+            BytesUtils.getWidthFromMaxInt(maxLevel), ByteBufferInputStream.wrap(levels));
+    for (int pos = 0; pos < count; pos += 1) {
+      decoded[pos] = decoder.readInt();
+    }
+
+    return decoded;
+  }
+
+  private static ByteBuffer levelBytes(BytesInput bytes) throws IOException {
+    return bytes.toInputStream().slice((int) bytes.size());
+  }
+
+  private static int[] levelsBuffer(int[] reuse, int count) {
+    return reuse != null && reuse.length >= count ? reuse : new int[count];
+  }
+
+  /**
+   * Returns how many of the remaining values in the current page belong to the next {@code numRows}
+   * rows, including values that continue the row that was read last.
+   */
+  int valueCount(int numRows) {
+    if (pageRepetitionLevels == null) {
+      return Math.min(numRows, triplesCount - triplesRead);
+    }
+
+    int pos = triplesRead;
+    int rowsLeft = numRows;
+    while (pos < triplesCount) {
+      if (pageRepetitionLevels[pos] == 0) {
+        if (rowsLeft == 0) {
+          break;
+        }
+
+        rowsLeft -= 1;
+      }
+
+      pos += 1;
+    }
+
+    return pos - triplesRead;
+  }
+
+  /** Adds the levels of the next {@code numValues} values in the current page to the holder. */
+  void appendLevels(LevelsHolder levels, int numValues) {
+    levels.append(pageRepetitionLevels, pageDefinitionLevels, triplesRead, numValues);
+  }
+
+  /** Moves past the next {@code numValues} values in the current page without reading them. */
+  void skipValues(int numValues) {
+    this.triplesRead += numValues;
+    this.hasNext = triplesRead < triplesCount;
   }
 
   /**
