@@ -24,6 +24,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.TestBase;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -47,6 +48,18 @@ public class TestOutputFileFactory extends TestBase {
 
     String location = fileFactory.newOutputFile().encryptingOutputFile().location();
     assertThat(FileFormat.fromFileName(location)).isEqualTo(FileFormat.AVRO);
+  }
+
+  @TestTemplate
+  public void testOutputFileFactoryWithCustomDefaultFormat() {
+    table.updateProperties().set(TableProperties.DEFAULT_FILE_FORMAT, "custom").commit();
+
+    OutputFileFactory fileFactory =
+        OutputFileFactory.builderFor(table, PARTITION_ID, TASK_ID).build();
+
+    String location = fileFactory.newOutputFile().encryptingOutputFile().location();
+    assertThat(location).endsWith(".custom");
+    assertThat(FileFormat.fromFileName(location)).isEqualTo(FileFormat.CUSTOM);
   }
 
   @TestTemplate

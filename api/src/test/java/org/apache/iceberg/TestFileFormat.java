@@ -37,6 +37,8 @@ class TestFileFormat {
         {"dir/file.parquet", FileFormat.PARQUET},
         {"file.avro", FileFormat.AVRO},
         {"dir/file.avro", FileFormat.AVRO},
+        {"file.custom", FileFormat.CUSTOM},
+        {"dir/file.custom", FileFormat.CUSTOM},
         {"v1.metadata.json", FileFormat.METADATA},
         {"dir/v1.metadata.json", FileFormat.METADATA},
         // Short file names with format
@@ -44,6 +46,7 @@ class TestFileFormat {
         {"x.orc", FileFormat.ORC},
         {"x.parquet", FileFormat.PARQUET},
         {"x.avro", FileFormat.AVRO},
+        {"x.custom", FileFormat.CUSTOM},
         {"x.metadata.json", FileFormat.METADATA},
         // Unsupported formats
         {"file.csv", null},
