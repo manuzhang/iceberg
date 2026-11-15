@@ -120,6 +120,17 @@ allprojects {
   group = "org.apache.iceberg"
   version = projectVersion
   repositories {
+    exclusiveContent {
+      forRepository {
+        maven {
+          name = "spark3510rc1"
+          url = uri("https://repository.apache.org/content/repositories/orgapachespark-1543/")
+        }
+      }
+      filter {
+        includeVersionByRegex("org\\.apache\\.spark", ".*", "3\\.5\\.10")
+      }
+    }
     if (System.getenv("GITHUB_ACTIONS") != null) {
       // Google Mirror of Maven Central, placed first so that it's used instead of flaky Maven Central
       maven {
