@@ -38,6 +38,7 @@ import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.expressions.Expressions;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -294,6 +295,63 @@ public class TestRewriteManifests extends TestBase {
         manifests.get(0), ids(appendId), files(FILE_A), statuses(ManifestEntry.Status.EXISTING));
     validateManifestEntries(
         manifests.get(1), ids(appendId), files(FILE_B), statuses(ManifestEntry.Status.EXISTING));
+  }
+
+  @TestTemplate
+  void rewriteStagedManifestAfterTransactionRetryPreservesSequenceNumbers() throws IOException {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
+
+    Transaction txn = table.newTransaction();
+    txn.newFastAppend().appendFile(FILE_A).commit();
+    long appendId = txn.table().currentSnapshot().snapshotId();
+    txn.rewriteManifests().clusterBy(file -> "file").commit();
+
+    table.newFastAppend().appendFile(FILE_B).commit();
+    txn.commitTransaction();
+
+    Snapshot retriedAppend = table.snapshot(appendId);
+    try (CloseableIterable<FileScanTask> tasks = table.newScan().planFiles()) {
+      assertThat(tasks)
+          .filteredOn(task -> task.file().location().equals(FILE_A.location()))
+          .singleElement()
+          .satisfies(
+              task -> {
+                assertThat(task.file().dataSequenceNumber())
+                    .isEqualTo(retriedAppend.sequenceNumber());
+                assertThat(task.file().fileSequenceNumber())
+                    .isEqualTo(retriedAppend.sequenceNumber());
+              });
+    }
+  }
+
+  @TestTemplate
+  void rewriteStagedManifestAfterTransactionRetryPreservesRowIds() throws IOException {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(3);
+
+    Transaction txn = table.newTransaction();
+    txn.newFastAppend().appendFile(FILE_A).commit();
+    long appendId = txn.table().currentSnapshot().snapshotId();
+    txn.rewriteManifests().clusterBy(file -> "file").commit();
+
+    table.newFastAppend().appendFile(FILE_B).commit();
+    Snapshot concurrentAppend = table.currentSnapshot();
+    txn.commitTransaction();
+
+    Snapshot retriedAppend = table.snapshot(appendId);
+    try (CloseableIterable<FileScanTask> tasks = table.newScan().planFiles()) {
+      List<FileScanTask> scanTasks = Lists.newArrayList(tasks);
+      assertThat(scanTasks)
+          .filteredOn(task -> task.file().location().equals(FILE_A.location()))
+          .singleElement()
+          .satisfies(
+              task -> assertThat(task.file().firstRowId()).isEqualTo(retriedAppend.firstRowId()));
+      assertThat(scanTasks)
+          .filteredOn(task -> task.file().location().equals(FILE_B.location()))
+          .singleElement()
+          .satisfies(
+              task ->
+                  assertThat(task.file().firstRowId()).isEqualTo(concurrentAppend.firstRowId()));
+    }
   }
 
   @TestTemplate

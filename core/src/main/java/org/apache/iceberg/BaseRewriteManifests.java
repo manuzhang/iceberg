@@ -26,6 +26,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
@@ -173,7 +174,7 @@ public class BaseRewriteManifests extends SnapshotProducer<RewriteManifests>
 
     validateDeletedManifests(currentManifestSet, base.currentSnapshot().snapshotId());
 
-    if (requiresRewrite(currentManifestSet)) {
+    if (requiresRewrite(currentManifests)) {
       performRewrite(currentManifests);
     } else {
       keepActiveManifests(currentManifests);
@@ -203,7 +204,7 @@ public class BaseRewriteManifests extends SnapshotProducer<RewriteManifests>
         tableName, operation(), snapshotId, sequenceNumber, snapshot.summary());
   }
 
-  private boolean requiresRewrite(Set<ManifestFile> currentManifests) {
+  private boolean requiresRewrite(List<ManifestFile> currentManifests) {
     if (clusterByFunc == null) {
       // manifests are deleted and added directly so don't perform a rewrite
       return false;
@@ -214,8 +215,22 @@ public class BaseRewriteManifests extends SnapshotProducer<RewriteManifests>
       return true;
     }
 
-    // if any processed manifest is not in the current manifest list, perform a full rewrite
-    return rewrittenManifests.stream().anyMatch(manifest -> !currentManifests.contains(manifest));
+    Map<String, ManifestFile> currentManifestsByPath =
+        currentManifests.stream()
+            .collect(Collectors.toMap(ManifestFile::path, Function.identity()));
+
+    // Staged manifests can inherit new metadata when their transaction is retried.
+    for (ManifestFile rewritten : rewrittenManifests) {
+      ManifestFile current = currentManifestsByPath.get(rewritten.path());
+      if (current == null
+          || rewritten.sequenceNumber() != current.sequenceNumber()
+          || rewritten.minSequenceNumber() != current.minSequenceNumber()
+          || !Objects.equals(rewritten.firstRowId(), current.firstRowId())) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private void keepActiveManifests(List<ManifestFile> currentManifests) {
