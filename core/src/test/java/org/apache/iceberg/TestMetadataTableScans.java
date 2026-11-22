@@ -33,12 +33,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
+import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.expressions.Evaluator;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.expressions.UnboundPredicate;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterators;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
@@ -118,6 +120,72 @@ public class TestMetadataTableScans extends MetadataTableScanTestBase {
 
     try (CloseableIterable<FileScanTask> tasks = scan.planFiles()) {
       assertThat(tasks).hasSize(1);
+    }
+  }
+
+  @TestTemplate
+  void manifestsTablesPreserveMissingV1DataFileCounts() throws IOException {
+    assumeThat(formatVersion).isEqualTo(1);
+
+    long snapshotId = 1L;
+    ManifestFile manifest = writeManifest(snapshotId, FILE_A);
+    OutputFile manifestList =
+        table.io().newOutputFile(temp.resolve("legacy-manifests.avro").toString());
+    try (ManifestListWriter writer =
+        ManifestLists.write(
+            formatVersion,
+            manifestList,
+            PlaintextEncryptionManager.instance(),
+            snapshotId,
+            null,
+            0,
+            null)) {
+      writer.add(
+          new GenericManifestFile(
+              table.io().newInputFile(manifest.path()), manifest.partitionSpecId(), snapshotId));
+    }
+
+    Snapshot snapshot =
+        new BaseSnapshot(
+            0,
+            snapshotId,
+            null,
+            System.currentTimeMillis(),
+            DataOperations.APPEND,
+            Map.of(),
+            table.schema().schemaId(),
+            manifestList.location(),
+            null,
+            null,
+            null);
+    TableOperations ops = table.operations();
+    TableMetadata base = ops.current();
+    ops.commit(
+        base,
+        TableMetadata.buildFrom(base).setBranchSnapshot(snapshot, SnapshotRef.MAIN_BRANCH).build());
+    table.refresh();
+
+    for (Table metadataTable : List.of(new ManifestsTable(table), new AllManifestsTable(table))) {
+      TableScan scan =
+          metadataTable
+              .newScan()
+              .select(
+                  "added_data_files_count",
+                  "existing_data_files_count",
+                  "deleted_data_files_count",
+                  "added_delete_files_count",
+                  "existing_delete_files_count",
+                  "deleted_delete_files_count");
+      try (CloseableIterable<FileScanTask> tasks = scan.planFiles();
+          CloseableIterable<StructLike> rows =
+              Iterators.getOnlyElement(tasks.iterator()).asDataTask().rows()) {
+        StructLike row = Iterators.getOnlyElement(rows.iterator());
+        assertThat(scan.schema().columns().subList(0, 3)).allMatch(Types.NestedField::isOptional);
+        for (int index = 0; index < 3; index++) {
+          assertThat(row.get(index, Integer.class)).isNull();
+          assertThat(row.get(index + 3, Integer.class)).isZero();
+        }
+      }
     }
   }
 

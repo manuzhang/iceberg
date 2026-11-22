@@ -35,9 +35,9 @@ public class ManifestsTable extends BaseMetadataTable {
           Types.NestedField.required(2, "length", Types.LongType.get()),
           Types.NestedField.required(3, "partition_spec_id", Types.IntegerType.get()),
           Types.NestedField.required(4, "added_snapshot_id", Types.LongType.get()),
-          Types.NestedField.required(5, "added_data_files_count", Types.IntegerType.get()),
-          Types.NestedField.required(6, "existing_data_files_count", Types.IntegerType.get()),
-          Types.NestedField.required(7, "deleted_data_files_count", Types.IntegerType.get()),
+          Types.NestedField.optional(5, "added_data_files_count", Types.IntegerType.get()),
+          Types.NestedField.optional(6, "existing_data_files_count", Types.IntegerType.get()),
+          Types.NestedField.optional(7, "deleted_data_files_count", Types.IntegerType.get()),
           Types.NestedField.required(15, "added_delete_files_count", Types.IntegerType.get()),
           Types.NestedField.required(16, "existing_delete_files_count", Types.IntegerType.get()),
           Types.NestedField.required(17, "deleted_delete_files_count", Types.IntegerType.get()),
@@ -99,15 +99,17 @@ public class ManifestsTable extends BaseMetadataTable {
   }
 
   static StaticDataTask.Row manifestFileToRow(PartitionSpec spec, ManifestFile manifest) {
+    // Keep the zero boxed so missing v1 data file counts remain null.
+    Integer zero = 0;
     return StaticDataTask.Row.of(
         manifest.content().id(),
         manifest.path(),
         manifest.length(),
         manifest.partitionSpecId(),
         manifest.snapshotId(),
-        manifest.content() == ManifestContent.DATA ? manifest.addedFilesCount() : 0,
-        manifest.content() == ManifestContent.DATA ? manifest.existingFilesCount() : 0,
-        manifest.content() == ManifestContent.DATA ? manifest.deletedFilesCount() : 0,
+        manifest.content() == ManifestContent.DATA ? manifest.addedFilesCount() : zero,
+        manifest.content() == ManifestContent.DATA ? manifest.existingFilesCount() : zero,
+        manifest.content() == ManifestContent.DATA ? manifest.deletedFilesCount() : zero,
         manifest.content() == ManifestContent.DELETES ? manifest.addedFilesCount() : 0,
         manifest.content() == ManifestContent.DELETES ? manifest.existingFilesCount() : 0,
         manifest.content() == ManifestContent.DELETES ? manifest.deletedFilesCount() : 0,
