@@ -18,10 +18,12 @@
  */
 package org.apache.iceberg;
 
+import static org.apache.iceberg.expressions.Expressions.bucket;
 import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assumptions.assumeThat;
+import static org.assertj.core.groups.Tuple.tuple;
 
 import java.io.File;
 import java.io.IOException;
@@ -157,6 +159,50 @@ public class TestMetadataTableScansWithPartitionEvolution extends MetadataTableS
     validatePartition(entries, 0, 3);
     validatePartition(entries, 1, 2);
     validatePartition(entries, 1, 3);
+  }
+
+  @TestTemplate
+  public void filesTableCanSelectByNameAfterReusingPartitionFieldName() throws IOException {
+    assumeThat(formatVersion).isGreaterThanOrEqualTo(2);
+
+    table.updateSpec().addField("shard", bucket("id", 8)).commit();
+    int oldShardId = table.spec().fields().get(2).fieldId();
+    table.newFastAppend().appendFile(newDataFile("id=4/nested.id=4/shard=1")).commit();
+
+    table.updateSpec().removeField("shard").addField("shard", bucket("id", 16)).commit();
+    int newShardId = table.spec().fields().get(2).fieldId();
+    table.newFastAppend().appendFile(newDataFile("id=5/nested.id=5/shard=2")).commit();
+
+    String reservedName = "shard_" + oldShardId;
+    table.updateSpec().addField(reservedName, bucket("nested.id", 4)).commit();
+
+    assertThat(newShardId).isNotEqualTo(oldShardId);
+    Table files = new FilesTable(table);
+    Schema projection = files.newScan().select("file_path").schema();
+    assertThat(projection.columns())
+        .extracting(Types.NestedField::name)
+        .containsExactly("file_path");
+
+    String oldShardName = "partition." + reservedName + "_";
+    String newShardName = "partition.shard_" + newShardId;
+    assertThat(files.schema().findField(oldShardName).fieldId()).isEqualTo(oldShardId);
+    assertThat(files.schema().findField(newShardName).fieldId()).isEqualTo(newShardId);
+    assertThat(files.schema().findField("partition." + reservedName)).isNotNull();
+
+    TableScan scan = files.newScan().select(oldShardName, newShardName);
+    try (CloseableIterable<FileScanTask> tasks = scan.planFiles()) {
+      assertThat(allRows(tasks).map(row -> row.get(0, StructLike.class)))
+          .extracting(
+              partition -> partition.get(0, Integer.class),
+              partition -> partition.get(1, Integer.class))
+          .containsExactlyInAnyOrder(
+              tuple(null, null),
+              tuple(null, null),
+              tuple(null, null),
+              tuple(null, null),
+              tuple(1, null),
+              tuple(null, 2));
+    }
   }
 
   @TestTemplate
